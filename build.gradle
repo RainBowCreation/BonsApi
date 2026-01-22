@@ -1,0 +1,33 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(8) }
+    withSourcesJar()
+}
+
+tasks.register('apiJar', Jar) {
+    archiveBaseName.set('Bonsai')
+    archiveVersion.set(project.version)
+    archiveClassifier.set('')
+    from(sourceSets.main.output) {
+        include 'net/rainbowcreation/bonsai/api/**'
+    }
+}
+
+artifacts { archives tasks.named('apiJar') }
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            groupId = 'net.rainbowcreation.bonsai'
+            artifactId = 'BonsApi'
+            version = '0.1-SNAPSHOT'
+            from components.java
+        }
+    }
+    repositories {
+        maven { url = uri("${rootProject.projectDir}/.repo/releases") }
+    }
+}
