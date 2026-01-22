@@ -1,29 +1,30 @@
 plugins {
     id 'java-library'
     id 'maven-publish'
-}
-java {
-    toolchain { languageVersion = JavaLanguageVersion.of(8) }
-    withSourcesJar()
+    id 'com.gradleup.shadow'
 }
 
-tasks.register('apiJar', Jar) {
-    archiveBaseName.set('Bonsai')
-    archiveVersion.set(project.version)
+dependencies {
+    implementation 'com.dslplatform:dsl-json:2.0.2'
+}
+
+tasks.named('shadowJar') {
+    archiveBaseName.set('BonsApi')
+    archiveVersion.set(rootProject.version)
     archiveClassifier.set('')
-    from(sourceSets.main.output) {
-        include 'net/rainbowcreation/bonsai/api/**'
-    }
+    relocate 'com.dslplatform', 'net.rainbowcreation.bonsai.vendored.dsljson'
 }
 
-artifacts { archives tasks.named('apiJar') }
+tasks.named('jar') {
+    dependsOn('shadowJar')
+}
 
 publishing {
     publications {
         mavenJava(MavenPublication) {
             groupId = 'net.rainbowcreation.bonsai'
             artifactId = 'BonsApi'
-            version = '0.1-SNAPSHOT'
+            version = rootProject.version + '-SNAPSHOT'
             from components.java
         }
     }
