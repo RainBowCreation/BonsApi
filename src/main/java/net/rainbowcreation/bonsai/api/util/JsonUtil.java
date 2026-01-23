@@ -132,19 +132,19 @@ public class JsonUtil {
         FieldSerializer(byte[] k, MethodHandle h) { key = k; handle = h; }
     }
 
-    public static <T> List<T> fromJsonList(String json, Class<T> type) {
-        if (json == null || json.isEmpty()) return Collections.emptyList();
-        try {
-            byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-            return dsl.deserializeList(type, bytes, bytes.length);
-        } catch (IOException e) {
-            throw new RuntimeException("JSON Deserialization Failed", e);
-        }
-    }
-
     public static void registerType(Class<?> type) {
         if (!pojoWriters.containsKey(type)) {
             registerPojo(type);
+        }
+    }
+
+    public static <T> T fromJson(String json, Class<T> type) {
+        if (json == null || json.isEmpty()) return null;
+        try {
+            byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+            return dsl.deserialize(type, bytes, bytes.length);
+        } catch (IOException e) {
+            throw new RuntimeException("JSON Deserialization Failed for " + type.getSimpleName(), e);
         }
     }
 }

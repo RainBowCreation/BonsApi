@@ -5,7 +5,10 @@ import net.rainbowcreation.bonsai.api.BonsaiTable;
 import net.rainbowcreation.bonsai.api.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.annotation.BonsaiQuery;
 import net.rainbowcreation.bonsai.api.connection.Connection;
+import net.rainbowcreation.bonsai.api.util.ForyFactory;
 import net.rainbowcreation.bonsai.api.util.JsonUtil;
+
+import org.apache.fory.ThreadSafeFory;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -15,27 +18,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.fory.Fory;
-import org.apache.fory.ThreadSafeFory;
-import org.apache.fory.config.Language;
-
 import java.nio.charset.StandardCharsets;
 
 public class RemoteRoot implements BonsaiRoot {
     private final Connection connection;
     private final String db;
-
-    private final ThreadSafeFory fory;
+    private final ThreadSafeFory fory = ForyFactory.get();
 
     public RemoteRoot(Connection connection, String db, String secret) {
         this.connection = connection;
         this.db = db;
-
-        // Initialize Fory (formerly Fury) once
-        this.fory = Fory.builder()
-                .withLanguage(Language.JAVA)
-                .requireClassRegistration(false)
-                .buildThreadSafeFory();
     }
 
     @Override
