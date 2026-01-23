@@ -1,4 +1,4 @@
-package net.rainbowcreation.bonsai.api.internal;
+package net.rainbowcreation.bonsai.api.connection;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -32,42 +32,50 @@ public class TcpConnection implements Connection {
 
     private void connect() {
         try {
+            // Close old socket if exists
+            closeQuietly();
+
             this.socket = new Socket(host, port);
-            this.socket.setTcpNoDelay(true);
+            this.socket.setTcpNoDelay(true); // Disable Nagle's Algorithm for lower latency
             this.socket.setSoTimeout(5000);
 
             this.in = new DataInputStream(socket.getInputStream());
             this.out = new DataOutputStream(socket.getOutputStream());
         } catch (Exception e) {
-            throw new RuntimeException("Failed to connect to Bonsai Sidecar at " + host + ":" + port, e);
+            System.err.println("[Bonsai] TCP Connect Failed: " + e.getMessage());
         }
     }
 
     @Override
-    public CompletableFuture<String> send(String op, String db, String table, String key, String payload) {
+    public CompletableFuture<byte[]> send(String op, String db, String table, String key, byte[] payload) {
         return CompletableFuture.supplyAsync(() -> {
-            lock.lock(); // Ensure only one thread writes to the socket at a time
+            lock.lock(); // CRITICAL: Only one thread can write to the socket stream at a time
             try {
                 if (socket == null || socket.isClosed() || !socket.isConnected()) {
                     connect();
+                    if (socket == null) throw new RuntimeException("Unable to connect to Bonsai Sidecar");
                 }
 
-                // --- WRITE ---
-                // Protocol: [OP_LEN][OP] [DB_LEN][DB] [TBL_LEN][TBL] [KEY_LEN][KEY] [PAY_LEN][PAY]
+                // --- WRITE REQUEST ---
+                // Protocol: [OP_LEN][OP] [DB_LEN][DB] [TBL_LEN][TBL] [KEY_LEN][KEY] [PAY_LEN][PAYLOAD]
+
                 writeString(op);
                 writeString(db);
                 writeString(table);
                 writeString(key);
-                writeString(payload);
+                writeBlob(payload);
+
                 out.flush();
 
-                // --- READ ---
-                // Protocol: [STATUS_CODE] [BODY_LEN] [BODY]
+                // --- READ RESPONSE ---
+                // Protocol: [STATUS_INT] [BODY_LEN] [BODY_BYTES]
+
                 int status = in.readInt();
-                String responseBody = readString();
+                byte[] responseBody = readBlob();
 
                 if (status >= 400) {
-                    throw new RuntimeException("Bonsai Error (" + status + "): " + responseBody);
+                    String errorMsg = (responseBody != null) ? new String(responseBody, StandardCharsets.UTF_8) : "Unknown Error";
+                    throw new RuntimeException("Bonsai Error (" + status + "): " + errorMsg);
                 }
 
                 return responseBody;
@@ -89,7 +97,7 @@ public class TcpConnection implements Connection {
 
     private void writeString(String str) throws Exception {
         if (str == null) {
-            out.writeInt(-1); // -1 indicates NULL
+            out.writeInt(-1);
         } else {
             byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
             out.writeInt(bytes.length);
@@ -97,13 +105,23 @@ public class TcpConnection implements Connection {
         }
     }
 
-    private String readString() throws Exception {
+    private void writeBlob(byte[] bytes) throws Exception {
+        if (bytes == null) {
+            out.writeInt(-1);
+        } else {
+            out.writeInt(bytes.length);
+            out.write(bytes);
+        }
+    }
+
+    private byte[] readBlob() throws Exception {
         int length = in.readInt();
         if (length == -1) return null;
+        if (length == 0) return new byte[0];
 
         byte[] bytes = new byte[length];
         in.readFully(bytes);
-        return new String(bytes, StandardCharsets.UTF_8);
+        return bytes;
     }
 
     private void closeQuietly() {

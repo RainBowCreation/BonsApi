@@ -6,6 +6,7 @@ plugins {
 
 dependencies {
     implementation 'com.dslplatform:dsl-json:2.0.2'
+    implementation 'org.apache.fory:fory-core:0.14.1'
 }
 
 tasks.named('shadowJar') {

@@ -1,8 +1,8 @@
 package net.rainbowcreation.bonsai.api;
 
 import net.rainbowcreation.bonsai.api.impl.RemoteBonsai;
-import net.rainbowcreation.bonsai.api.internal.HttpConnection;
-import net.rainbowcreation.bonsai.api.internal.TcpConnection;
+import net.rainbowcreation.bonsai.api.connection.HttpConnection;
+import net.rainbowcreation.bonsai.api.connection.TcpConnection;
 import net.rainbowcreation.bonsai.api.util.Stoppable;
 
 import java.net.Socket;

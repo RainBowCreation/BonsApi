@@ -3,7 +3,7 @@ package net.rainbowcreation.bonsai.api.query;
 import java.util.List;
 
 public class GroupNode implements Criterion {
-    public String logic; // "AND" or "OR"
+    public String logic;
     public List<Criterion> children;
 
     public GroupNode(String logic, List<Criterion> children) {

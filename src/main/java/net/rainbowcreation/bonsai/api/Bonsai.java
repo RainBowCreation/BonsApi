@@ -2,7 +2,7 @@ package net.rainbowcreation.bonsai.api;
 
 import net.rainbowcreation.bonsai.api.util.Stoppable;
 
-import java.util.List;
+import java.util.Set;
 
 public interface Bonsai extends Stoppable {
     /**
@@ -17,7 +17,7 @@ public interface Bonsai extends Stoppable {
     }
 
     /**
-     * @return List of available database names.
+     * @return Set of available database names.
      */
-    List<String> getRoots();
+    Set<String> getRoots();
 }
