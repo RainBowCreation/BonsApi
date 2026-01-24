@@ -23,7 +23,6 @@ import java.nio.charset.StandardCharsets;
 public class RemoteRoot implements BonsaiRoot {
     private final Connection connection;
     private final String db;
-    private final ThreadSafeFory fory = ForyFactory.get();
 
     public RemoteRoot(Connection connection, String db, String secret) {
         this.connection = connection;
@@ -33,12 +32,12 @@ public class RemoteRoot implements BonsaiRoot {
     @Override
     public <T> BonsaiTable<T> use(Class<T> type) {
         scanAndRegisterSchema(type);
-        return new RemoteTable<>(connection, db, type.getSimpleName(), type, fory);
+        return new RemoteTable<>(connection, db, type.getSimpleName(), type);
     }
 
     @Override
     public BonsaiTable<Object> use(String namespace) {
-        return new RemoteTable<>(connection, db, namespace, Object.class, fory);
+        return new RemoteTable<>(connection, db, namespace, Object.class);
     }
 
     private void scanAndRegisterSchema(Class<?> type) {

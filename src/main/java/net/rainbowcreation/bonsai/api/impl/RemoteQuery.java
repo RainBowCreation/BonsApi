@@ -2,14 +2,20 @@ package net.rainbowcreation.bonsai.api.impl;
 
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.api.BonsaiFuture;
+import net.rainbowcreation.bonsai.api.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.connection.Connection;
 import net.rainbowcreation.bonsai.api.query.*;
+import net.rainbowcreation.bonsai.api.util.CastUtil;
+import net.rainbowcreation.bonsai.api.util.ForyFactory;
 import net.rainbowcreation.bonsai.api.util.JsonUtil;
 import org.apache.fory.ThreadSafeFory;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class RemoteQuery<T> implements Query<T> {
 
@@ -17,19 +23,21 @@ public class RemoteQuery<T> implements Query<T> {
     private final String db;
     private final String table;
     private final Class<T> type;
-    private final ThreadSafeFory fory;
+    private static final ThreadSafeFory FORY = ForyFactory.get();
 
     private final SearchCriteria rootCriteria = new SearchCriteria();
     private int limit = -1;
     private int offset = -1;
     private final Map<String, Integer> sorts = new HashMap<>();
 
-    public RemoteQuery(Connection conn, String db, String table, Class<T> type, ThreadSafeFory fory) {
+    // Performance Cache for Reflection
+    private static final Map<Class<?>, List<Field>> fieldCache = new ConcurrentHashMap<>();
+
+    public RemoteQuery(Connection conn, String db, String table, Class<T> type) {
         this.conn = conn;
         this.db = db;
         this.table = table;
         this.type = type;
-        this.fory = fory;
     }
 
     @Override
@@ -83,7 +91,22 @@ public class RemoteQuery<T> implements Query<T> {
         return new BonsaiFuture<>(io.handleAsync((bytes, ex) -> {
             if (ex != null) throw new RuntimeException(ex);
             if (bytes == null || bytes.length == 0) return new ArrayList<>();
-            return (List<T>) fory.deserialize(bytes);
+
+            Object raw = FORY.deserialize(bytes);
+            if (!(raw instanceof List)) return new ArrayList<>();
+            List<?> rawList = (List<?>) raw;
+
+            List<T> result = new ArrayList<>(rawList.size());
+            for (Object item : rawList) {
+                if (item == null) continue;
+                if (type.isInstance(item)) {
+                    result.add(type.cast(item));
+                }
+                else if (item instanceof Map) {
+                    result.add(mapToPojo((Map<?, ?>) item, type));
+                }
+            }
+            return result;
 
         }, BonsApi.WORKER_POOL));
     }
@@ -134,5 +157,34 @@ public class RemoteQuery<T> implements Query<T> {
             if (ex != null) throw new RuntimeException(ex);
             return null;
         }, BonsApi.WORKER_POOL));
+    }
+
+    private T mapToPojo(Map<?, ?> map, Class<T> clazz) {
+        try {
+            T instance = clazz.getConstructor().newInstance();
+            for (Field f : getCachedFields(clazz)) {
+                Object val = map.get(f.getName());
+                if (val != null) {
+                    f.set(instance, CastUtil.coerce(val, f.getType()));
+                }
+            }
+            return instance;
+        } catch (Exception e) {
+            String json = JsonUtil.toJson(map);
+            return JsonUtil.fromJson(json, clazz);
+        }
+    }
+
+    private List<Field> getCachedFields(Class<?> clazz) {
+        return fieldCache.computeIfAbsent(clazz, c -> {
+            List<Field> list = new ArrayList<>();
+            for (Field f : c.getDeclaredFields()) {
+                if (Modifier.isStatic(f.getModifiers()) || Modifier.isTransient(f.getModifiers())) continue;
+                if (f.isAnnotationPresent(BonsaiIgnore.class)) continue;
+                f.setAccessible(true);
+                list.add(f);
+            }
+            return list;
+        });
     }
 }

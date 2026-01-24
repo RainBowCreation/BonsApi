@@ -1,8 +1,10 @@
 package net.rainbowcreation.bonsai.api.connection;
 
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 
+import java.io.IOException;
 import java.net.Socket;
 
 import java.nio.charset.StandardCharsets;
@@ -16,7 +18,6 @@ public class TcpConnection implements Connection {
 
     private final String host;
     private final int port;
-
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
 
     private Socket socket;
@@ -32,11 +33,9 @@ public class TcpConnection implements Connection {
 
     private void connect() {
         try {
-            // Close old socket if exists
             closeQuietly();
-
             this.socket = new Socket(host, port);
-            this.socket.setTcpNoDelay(true); // Disable Nagle's Algorithm for lower latency
+            this.socket.setTcpNoDelay(true); // Ultra-Fast Mode
             this.socket.setSoTimeout(5000);
 
             this.in = new DataInputStream(socket.getInputStream());
@@ -49,29 +48,31 @@ public class TcpConnection implements Connection {
     @Override
     public CompletableFuture<byte[]> send(String op, String db, String table, String key, byte[] payload) {
         return CompletableFuture.supplyAsync(() -> {
-            lock.lock(); // CRITICAL: Only one thread can write to the socket stream at a time
+            lock.lock();
             try {
                 if (socket == null || socket.isClosed() || !socket.isConnected()) {
                     connect();
                     if (socket == null) throw new RuntimeException("Unable to connect to Bonsai Sidecar");
                 }
 
-                // --- WRITE REQUEST ---
-                // Protocol: [OP_LEN][OP] [DB_LEN][DB] [TBL_LEN][TBL] [KEY_LEN][KEY] [PAY_LEN][PAYLOAD]
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream(1024);
+                DataOutputStream body = new DataOutputStream(buffer);
 
-                writeString(op);
-                writeString(db);
-                writeString(table);
-                writeString(key);
-                writeBlob(payload);
+                writeString(body, op);
+                writeString(body, db);
+                writeString(body, table);
+                writeString(body, key);
+                writeBlob(body, payload);
 
+                byte[] packet = buffer.toByteArray();
+
+                out.writeInt(packet.length);
+                out.write(packet);
                 out.flush();
 
-                // --- READ RESPONSE ---
-                // Protocol: [STATUS_INT] [BODY_LEN] [BODY_BYTES]
-
+                int frameLen = in.readInt();
                 int status = in.readInt();
-                byte[] responseBody = readBlob();
+                byte[] responseBody = readBlob(in);
 
                 if (status >= 400) {
                     String errorMsg = (responseBody != null) ? new String(responseBody, StandardCharsets.UTF_8) : "Unknown Error";
@@ -95,32 +96,32 @@ public class TcpConnection implements Connection {
         closeQuietly();
     }
 
-    private void writeString(String str) throws Exception {
+    private void writeString(DataOutputStream d, String str) throws IOException {
         if (str == null) {
-            out.writeInt(-1);
+            d.writeInt(-1);
         } else {
             byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
-            out.writeInt(bytes.length);
-            out.write(bytes);
+            d.writeInt(bytes.length);
+            d.write(bytes);
         }
     }
 
-    private void writeBlob(byte[] bytes) throws Exception {
+    private void writeBlob(DataOutputStream d, byte[] bytes) throws IOException {
         if (bytes == null) {
-            out.writeInt(-1);
+            d.writeInt(-1);
         } else {
-            out.writeInt(bytes.length);
-            out.write(bytes);
+            d.writeInt(bytes.length);
+            d.write(bytes);
         }
     }
 
-    private byte[] readBlob() throws Exception {
-        int length = in.readInt();
+    private byte[] readBlob(DataInputStream d) throws IOException {
+        int length = d.readInt();
         if (length == -1) return null;
         if (length == 0) return new byte[0];
 
         byte[] bytes = new byte[length];
-        in.readFully(bytes);
+        d.readFully(bytes);
         return bytes;
     }
 

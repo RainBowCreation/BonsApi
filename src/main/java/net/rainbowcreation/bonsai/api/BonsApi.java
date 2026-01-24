@@ -16,8 +16,8 @@ public class BonsApi implements Stoppable {
 
     // --- Configuration ---
     public static String HOST = "127.0.0.1";
-    public static int TCP_PORT = 7071;
-    public static int HTTP_PORT = 7070;
+    public static int TCP_PORT = 4533;
+    public static int HTTP_PORT = 8080;
 
     public static final ExecutorService WORKER_POOL = Executors.newCachedThreadPool();
     public static Logger LOGGER = Logger.getLogger(BonsApi.class.getName());

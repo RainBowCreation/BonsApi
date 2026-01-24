@@ -1,21 +1,20 @@
 package net.rainbowcreation.bonsai.api.util;
 
+import com.dslplatform.json.*;
+import com.dslplatform.json.runtime.Settings;
 import net.rainbowcreation.bonsai.api.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.query.*;
 
-import com.dslplatform.json.DslJson;
-import com.dslplatform.json.JsonWriter;
-import com.dslplatform.json.runtime.Settings;
-
 import java.io.IOException;
-
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class JsonUtil {
 
@@ -24,13 +23,14 @@ public class JsonUtil {
     private static final Map<Class<?>, JsonWriter.WriteObject<Object>> pojoWriters = new HashMap<>();
 
     static {
+        // --- WRITERS (UNCHANGED) ---
         dsl.registerWriter(FilterNode.class, (writer, f) -> {
             writer.writeByte(JsonWriter.OBJECT_START);
-            writer.writeAscii("type:\"FILTER\",field:");
+            writer.writeAscii("\"type\":\"FILTER\",\"field\":");
             writer.writeString(f.field);
-            writer.writeAscii(",op:");
+            writer.writeAscii(",\"op\":");
             writer.writeAscii(Integer.toString(f.op));
-            writer.writeAscii(",value:");
+            writer.writeAscii(",\"value\":");
             serialize(writer, f.value);
             writer.writeByte(JsonWriter.OBJECT_END);
         });
@@ -38,8 +38,9 @@ public class JsonUtil {
         dsl.registerWriter(GroupNode.class, (writer, g) -> {
             try {
                 writer.writeByte(JsonWriter.OBJECT_START);
-                writer.writeAscii("type:\"GROUP\",logic:"); writer.writeString(g.logic);
-                writer.writeAscii(",children:");
+                writer.writeAscii("\"type\":\"GROUP\",\"logic\":");
+                writer.writeString(g.logic);
+                writer.writeAscii(",\"children\":");
                 dsl.serialize(writer, g.children);
                 writer.writeByte(JsonWriter.OBJECT_END);
             } catch (IOException e) { throw new RuntimeException(e); }
@@ -48,12 +49,126 @@ public class JsonUtil {
         dsl.registerWriter(UpdatePayload.class, (writer, u) -> {
             try {
                 writer.writeByte(JsonWriter.OBJECT_START);
-                writer.writeAscii("where:"); serialize(writer, u.where);
-                writer.writeAscii(",set:"); dsl.serialize(writer, u.set);
+                writer.writeAscii("\"where\":"); serialize(writer, u.where);
+                writer.writeAscii(",\"set\":"); dsl.serialize(writer, u.set);
                 writer.writeByte(JsonWriter.OBJECT_END);
             } catch (IOException e) { throw new RuntimeException(e); }
         });
+
+        // --- READERS (FIXED) ---
+
+        dsl.registerReader(Criterion.class, reader -> {
+            try {
+                if (reader.last() != '{') throw reader.newParseError("Expected '{'");
+
+                reader.getNextToken(); // Move to key
+                String key = reader.readKey();
+                if (!"type".equals(key)) throw reader.newParseError("Expected 'type' field first");
+
+                String type = reader.readString();
+
+                // Manual Advance: readString leaves at quote.
+                // We need to check next char.
+                byte next = reader.getNextToken();
+                if (next != ',') throw reader.newParseError("Expected ',' after type");
+
+                reader.getNextToken(); // Move to next key start '"'
+
+                if ("FILTER".equals(type)) {
+                    return deserializeFilter(reader);
+                } else if ("GROUP".equals(type)) {
+                    return deserializeGroup(reader);
+                }
+                throw reader.newParseError("Unknown Criterion Type: " + type);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
     }
+
+    // --- MANUAL PARSERS (DIRECT CONVERTERS) ---
+
+    private static FilterNode deserializeFilter(JsonReader<?> reader) throws IOException {
+        String field = null;
+        int op = 0;
+        Object value = null;
+
+        // Loop: reader.last() is '"'
+        while (reader.last() == '"') {
+            String key = reader.readKey(); // Advances to value start
+
+            if ("field".equals(key)) {
+                field = reader.readString();
+            } else if ("op".equals(key)) {
+                // FIX: Do NOT use reader.next(). Use NumberConverter directly.
+                // readKey() already positioned us on the digit.
+                op = NumberConverter.deserializeInt(reader);
+            } else if ("value".equals(key)) {
+                // FIX: Use ObjectConverter directly.
+                value = ObjectConverter.deserializeObject(reader);
+            } else {
+                reader.skip();
+            }
+
+            // After value read, we need to handle delimiter.
+            // NumberConverter leaves us AT the delimiter.
+            // String/Object readers might leave us at end char or delimiter depending on impl.
+            // Safe logic: Check if we need to advance to comma.
+
+            byte last = reader.last();
+            if (last == '"' || last == ']' || last == '}') {
+                reader.getNextToken(); // Move to delimiter
+            }
+
+            if (reader.last() == ',') {
+                reader.getNextToken(); // Move to next key '"'
+            } else if (reader.last() == '}') {
+                break;
+            } else {
+                // Fallback for safety
+                throw reader.newParseError("Expected ',' or '}'");
+            }
+        }
+        return new FilterNode(field, idToOp(op), value);
+    }
+
+    private static GroupNode deserializeGroup(JsonReader<?> reader) throws IOException {
+        String logic = "AND";
+        List<Criterion> children = null;
+
+        while (reader.last() == '"') {
+            String key = reader.readKey();
+
+            if ("logic".equals(key)) {
+                logic = reader.readString();
+            } else if ("children".equals(key)) {
+                children = reader.readCollection(dsl.tryFindReader(Criterion.class));
+            } else {
+                reader.skip();
+            }
+
+            byte last = reader.last();
+            if (last == '"' || last == ']' || last == '}') {
+                reader.getNextToken();
+            }
+
+            if (reader.last() == ',') {
+                reader.getNextToken();
+            } else if (reader.last() == '}') {
+                break;
+            }
+        }
+        return new GroupNode(logic, children);
+    }
+
+    private static QueryOp idToOp(int id) {
+        for (QueryOp op : QueryOp.values()) {
+            if (op.getId() == id) return op;
+        }
+        return QueryOp.EQ;
+    }
+
+    // --- STANDARD UTILS ---
 
     public static String toJson(Object instance) {
         if (instance == null) return "null";
