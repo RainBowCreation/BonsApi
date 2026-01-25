@@ -1,14 +1,14 @@
 package net.rainbowcreation.bonsai.api.connection;
 
-import java.io.ByteArrayOutputStream;
+import net.rainbowcreation.bonsai.api.BonsaiRequest;
+import net.rainbowcreation.bonsai.api.BonsaiResponse;
+import net.rainbowcreation.bonsai.api.util.ForyFactory;
+import org.apache.fory.ThreadSafeFory;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
-
-import java.io.IOException;
 import java.net.Socket;
-
 import java.nio.charset.StandardCharsets;
-
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -55,31 +55,30 @@ public class TcpConnection implements Connection {
                     if (socket == null) throw new RuntimeException("Unable to connect to Bonsai Sidecar");
                 }
 
-                ByteArrayOutputStream buffer = new ByteArrayOutputStream(1024);
-                DataOutputStream body = new DataOutputStream(buffer);
+                BonsaiRequest req = new BonsaiRequest(op, db, table, key, payload);
 
-                writeString(body, op);
-                writeString(body, db);
-                writeString(body, table);
-                writeString(body, key);
-                writeBlob(body, payload);
+                ThreadSafeFory fory = ForyFactory.get();
+                byte[] requestBytes = fory.serialize(req);
 
-                byte[] packet = buffer.toByteArray();
-
-                out.writeInt(packet.length);
-                out.write(packet);
+                out.writeInt(requestBytes.length);
+                out.write(requestBytes);
                 out.flush();
 
-                int frameLen = in.readInt();
-                int status = in.readInt();
-                byte[] responseBody = readBlob(in);
+                int len = in.readInt();
+                if (len < 0) throw new RuntimeException("Invalid response frame length");
 
-                if (status >= 400) {
-                    String errorMsg = (responseBody != null) ? new String(responseBody, StandardCharsets.UTF_8) : "Unknown Error";
-                    throw new RuntimeException("Bonsai Error (" + status + "): " + errorMsg);
+                byte[] responseBytes = new byte[len];
+                in.readFully(responseBytes);
+
+                // 5. Deserialize with Fory
+                BonsaiResponse res = (BonsaiResponse) fory.deserialize(responseBytes);
+
+                if (res.status >= 400) {
+                    String errorMsg = (res.body != null) ? new String(res.body, StandardCharsets.UTF_8) : "Unknown Error";
+                    throw new RuntimeException("Bonsai Error (" + res.status + "): " + errorMsg);
                 }
 
-                return responseBody;
+                return res.body;
 
             } catch (Exception e) {
                 closeQuietly();
@@ -94,35 +93,6 @@ public class TcpConnection implements Connection {
     public void stop() {
         ioExecutor.shutdown();
         closeQuietly();
-    }
-
-    private void writeString(DataOutputStream d, String str) throws IOException {
-        if (str == null) {
-            d.writeInt(-1);
-        } else {
-            byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
-            d.writeInt(bytes.length);
-            d.write(bytes);
-        }
-    }
-
-    private void writeBlob(DataOutputStream d, byte[] bytes) throws IOException {
-        if (bytes == null) {
-            d.writeInt(-1);
-        } else {
-            d.writeInt(bytes.length);
-            d.write(bytes);
-        }
-    }
-
-    private byte[] readBlob(DataInputStream d) throws IOException {
-        int length = d.readInt();
-        if (length == -1) return null;
-        if (length == 0) return new byte[0];
-
-        byte[] bytes = new byte[length];
-        d.readFully(bytes);
-        return bytes;
     }
 
     private void closeQuietly() {

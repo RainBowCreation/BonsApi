@@ -83,7 +83,6 @@ public class RemoteTable<T> implements BonsaiTable<T> {
     public BonsaiFuture<Void> setAsync(String key, T value) {
         Object toSend = value;
 
-        // OPTIMIZATION: Convert POJO -> Map directly (No JSON String intermediate)
         if (type != Object.class && type != Map.class && !(value instanceof Map)) {
             toSend = pojoToMap(value);
         }

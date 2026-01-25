@@ -1,6 +1,7 @@
 package net.rainbowcreation.bonsai.api;
 
 public class BonsaiResponse {
+    public long id;
     public int status;
     public byte[] body;
 

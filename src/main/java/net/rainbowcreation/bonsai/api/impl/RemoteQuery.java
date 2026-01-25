@@ -30,7 +30,6 @@ public class RemoteQuery<T> implements Query<T> {
     private int offset = -1;
     private final Map<String, Integer> sorts = new HashMap<>();
 
-    // Performance Cache for Reflection
     private static final Map<Class<?>, List<Field>> fieldCache = new ConcurrentHashMap<>();
 
     public RemoteQuery(Connection conn, String db, String table, Class<T> type) {

@@ -1,6 +1,7 @@
 package net.rainbowcreation.bonsai.api;
 
 public class BonsaiRequest {
+    public long id;
     public final String op;
     public final String db;
     public final String table;
