@@ -35,7 +35,7 @@ public class TcpConnection implements Connection {
         try {
             closeQuietly();
             this.socket = new Socket(host, port);
-            this.socket.setTcpNoDelay(true); // Ultra-Fast Mode
+            this.socket.setTcpNoDelay(true);
             this.socket.setSoTimeout(5000);
 
             this.in = new DataInputStream(socket.getInputStream());
@@ -56,7 +56,6 @@ public class TcpConnection implements Connection {
                 }
 
                 BonsaiRequest req = new BonsaiRequest(op, db, table, key, payload);
-
                 ThreadSafeFory fory = ForyFactory.get();
                 byte[] requestBytes = fory.serialize(req);
 
@@ -70,7 +69,6 @@ public class TcpConnection implements Connection {
                 byte[] responseBytes = new byte[len];
                 in.readFully(responseBytes);
 
-                // 5. Deserialize with Fory
                 BonsaiResponse res = (BonsaiResponse) fory.deserialize(responseBytes);
 
                 if (res.status >= 400) {
@@ -89,13 +87,6 @@ public class TcpConnection implements Connection {
         }, ioExecutor);
     }
 
-    @Override
-    public void stop() {
-        ioExecutor.shutdown();
-        closeQuietly();
-    }
-
-    private void closeQuietly() {
-        try { if (socket != null) socket.close(); } catch (Exception ignored) {}
-    }
+    @Override public void stop() { ioExecutor.shutdown(); closeQuietly(); }
+    private void closeQuietly() { try { if (socket != null) socket.close(); } catch (Exception ignored) {} }
 }
