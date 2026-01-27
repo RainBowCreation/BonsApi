@@ -4,6 +4,7 @@ import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.api.BonsaiFuture;
 import net.rainbowcreation.bonsai.api.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.connection.Connection;
+import net.rainbowcreation.bonsai.api.connection.RequestOp;
 import net.rainbowcreation.bonsai.api.query.*;
 import net.rainbowcreation.bonsai.api.util.CastUtil;
 import net.rainbowcreation.bonsai.api.util.ForyFactory;
@@ -85,7 +86,7 @@ public class RemoteQuery<T> implements Query<T> {
 
         byte[] reqBytes = JsonUtil.toJson(payloadMap).getBytes(StandardCharsets.UTF_8);
 
-        CompletableFuture<byte[]> io = conn.send("QUERY_GET", db, table, null, reqBytes);
+        CompletableFuture<byte[]> io = conn.send( RequestOp.QUERY_GET, db, table, null, reqBytes);
 
         return new BonsaiFuture<>(io.handleAsync((bytes, ex) -> {
             if (ex != null) throw new RuntimeException(ex);
@@ -117,7 +118,7 @@ public class RemoteQuery<T> implements Query<T> {
 
         byte[] reqBytes = JsonUtil.toJson(payloadMap).getBytes(StandardCharsets.UTF_8);
 
-        CompletableFuture<byte[]> io = conn.send("QUERY_COUNT", db, table, null, reqBytes);
+        CompletableFuture<byte[]> io = conn.send(RequestOp.QUERY_COUNT, db, table, null, reqBytes);
 
         return new BonsaiFuture<>(io.handleAsync((bytes, ex) -> {
             if (ex != null) throw new RuntimeException(ex);
@@ -131,7 +132,7 @@ public class RemoteQuery<T> implements Query<T> {
         UpdatePayload payloadObj = new UpdatePayload(rootCriteria.buildRoot(), updates);
         byte[] reqBytes = JsonUtil.toJson(payloadObj).getBytes(StandardCharsets.UTF_8);
 
-        CompletableFuture<byte[]> io = conn.send("QUERY_UPDATE", db, table, null, reqBytes);
+        CompletableFuture<byte[]> io = conn.send(RequestOp.QUERY_UPDATE, db, table, null, reqBytes);
 
         return new BonsaiFuture<>(io.handleAsync((res, ex) -> {
             if (ex != null) throw new RuntimeException(ex);
@@ -150,7 +151,7 @@ public class RemoteQuery<T> implements Query<T> {
         payloadMap.put("filter", rootCriteria.buildRoot());
 
         byte[] reqBytes = JsonUtil.toJson(payloadMap).getBytes(StandardCharsets.UTF_8);
-        CompletableFuture<byte[]> io = conn.send("QUERY_DELETE", db, table, null, reqBytes);
+        CompletableFuture<byte[]> io = conn.send(RequestOp.QUERY_DELETE, db, table, null, reqBytes);
 
         return new BonsaiFuture<>(io.handleAsync((res, ex) -> {
             if (ex != null) throw new RuntimeException(ex);

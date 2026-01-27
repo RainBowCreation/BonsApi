@@ -2,28 +2,26 @@ package net.rainbowcreation.bonsai.api.connection;
 
 import net.rainbowcreation.bonsai.api.BonsaiRequest;
 import net.rainbowcreation.bonsai.api.BonsaiResponse;
-import net.rainbowcreation.bonsai.api.util.ForyFactory;
-import org.apache.fory.ThreadSafeFory;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
+import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class TcpConnection implements Connection {
-
     private final String host;
     private final int port;
-    private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
-
     private Socket socket;
     private DataInputStream in;
     private DataOutputStream out;
-    private final ReentrantLock lock = new ReentrantLock();
+    private final AtomicLong idGen = new AtomicLong(0);
+    private final Map<Long, CompletableFuture<byte[]>> pendingRequests = new ConcurrentHashMap<>();
+    private Thread readerThread;
+    private volatile boolean running = false;
+    private final Object writeLock = new Object();
 
     public TcpConnection(String host, int port) {
         this.host = host;
@@ -32,61 +30,107 @@ public class TcpConnection implements Connection {
     }
 
     private void connect() {
+        if (running) return;
         try {
             closeQuietly();
             this.socket = new Socket(host, port);
-            this.socket.setTcpNoDelay(true);
-            this.socket.setSoTimeout(5000);
+            this.socket.setTcpNoDelay(true); // Critical for low latency
+            this.socket.setKeepAlive(true);
 
-            this.in = new DataInputStream(socket.getInputStream());
-            this.out = new DataOutputStream(socket.getOutputStream());
+            this.in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+            this.out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+
+            this.running = true;
+            this.readerThread = new Thread(this::readLoop, "Bonsai-Client-Reader");
+            this.readerThread.setDaemon(true);
+            this.readerThread.start();
         } catch (Exception e) {
-            System.err.println("[Bonsai] TCP Connect Failed: " + e.getMessage());
+            throw new RuntimeException("Failed to connect to Bonsai Sidecar", e);
         }
     }
 
-    @Override
-    public CompletableFuture<byte[]> send(String op, String db, String table, String key, byte[] payload) {
-        return CompletableFuture.supplyAsync(() -> {
-            lock.lock();
+    private void readLoop() {
+        while (running && !Thread.currentThread().isInterrupted()) {
             try {
-                if (socket == null || socket.isClosed() || !socket.isConnected()) {
-                    connect();
-                    if (socket == null) throw new RuntimeException("Unable to connect to Bonsai Sidecar");
-                }
-
-                BonsaiRequest req = new BonsaiRequest(op, db, table, key, payload);
-                ThreadSafeFory fory = ForyFactory.get();
-                byte[] requestBytes = fory.serialize(req);
-
-                out.writeInt(requestBytes.length);
-                out.write(requestBytes);
-                out.flush();
-
+                // 1. Read Frame Length
                 int len = in.readInt();
-                if (len < 0) throw new RuntimeException("Invalid response frame length");
+                if (len < 0) throw new IOException("Invalid frame length");
 
-                byte[] responseBytes = new byte[len];
-                in.readFully(responseBytes);
+                // 2. Read Frame Data
+                byte[] data = new byte[len];
+                in.readFully(data);
 
-                BonsaiResponse res = (BonsaiResponse) fory.deserialize(responseBytes);
+                // 3. Manual Deserialization (No Fory)
+                BonsaiResponse res = BonsaiResponse.fromBytes(data);
 
-                if (res.status >= 400) {
-                    String errorMsg = (res.body != null) ? new String(res.body, StandardCharsets.UTF_8) : "Unknown Error";
-                    throw new RuntimeException("Bonsai Error (" + res.status + "): " + errorMsg);
+                CompletableFuture<byte[]> future = pendingRequests.remove(res.id);
+
+                if (future != null) {
+                    if (res.status >= 400) {
+                        String msg = (res.body != null) ? new String(res.body, StandardCharsets.UTF_8) : "Unknown Error";
+                        future.completeExceptionally(new RuntimeException("Bonsai Error (" + res.status + "): " + msg));
+                    } else {
+                        future.complete(res.body);
+                    }
                 }
-
-                return res.body;
-
             } catch (Exception e) {
-                closeQuietly();
-                throw new RuntimeException("TCP Transport Error", e);
-            } finally {
-                lock.unlock();
+                if (!running) break;
+                shutdownPending(e);
+                reconnect();
             }
-        }, ioExecutor);
+        }
     }
 
-    @Override public void stop() { ioExecutor.shutdown(); closeQuietly(); }
-    private void closeQuietly() { try { if (socket != null) socket.close(); } catch (Exception ignored) {} }
+    private void reconnect() {
+        running = false;
+        try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+        connect();
+    }
+
+    private void shutdownPending(Throwable t) {
+        for (CompletableFuture<byte[]> f : pendingRequests.values()) {
+            f.completeExceptionally(t);
+        }
+        pendingRequests.clear();
+    }
+
+    @Override
+    public CompletableFuture<byte[]> send(RequestOp op, String db, String table, String key, byte[] payload) {
+        if (!running) connect();
+
+        long reqId = idGen.incrementAndGet();
+        BonsaiRequest req = new BonsaiRequest(op, db, table, key, payload);
+        req.id = reqId;
+
+        CompletableFuture<byte[]> future = new CompletableFuture<>();
+        pendingRequests.put(reqId, future);
+
+        try {
+            // 1. Manual Serialization
+            byte[] data = req.getBytes();
+
+            synchronized (writeLock) {
+                out.writeInt(data.length); // Write Header
+                out.write(data);           // Write Body
+                out.flush();
+            }
+        } catch (Exception e) {
+            pendingRequests.remove(reqId);
+            future.completeExceptionally(e);
+            running = false;
+        }
+
+        return future;
+    }
+
+    @Override
+    public void stop() {
+        running = false;
+        if (readerThread != null) readerThread.interrupt();
+        closeQuietly();
+    }
+
+    private void closeQuietly() {
+        try { if (socket != null) socket.close(); } catch (Exception ignored) {}
+    }
 }
