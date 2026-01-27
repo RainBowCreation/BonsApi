@@ -13,7 +13,7 @@ public enum RequestOp {
 
     // query ops
     QUERY_GET("QUERY_GET", 10),
-    QUERY_UPDATE("QUERY_GET", 11),
+    QUERY_UPDATE("QUERY_UPDATE", 11),
     QUERY_DELETE("QUERY_DELETE", 12),
     QUERY_COUNT("QUERY_COUNT", 13),
 

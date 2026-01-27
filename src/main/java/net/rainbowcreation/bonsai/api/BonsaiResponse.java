@@ -3,9 +3,9 @@ package net.rainbowcreation.bonsai.api;
 import java.nio.ByteBuffer;
 
 public class BonsaiResponse {
-    public long id;
-    public int status; // 200, 404, 500
-    public byte[] body;
+    public final long id;
+    public final int status;
+    public final byte[] body;
 
     public BonsaiResponse(long id, int status, byte[] body) {
         this.id = id;
@@ -13,10 +13,12 @@ public class BonsaiResponse {
         this.body = body;
     }
 
-    // --- Serialization ---
+    public static BonsaiResponse ok() { return new BonsaiResponse(0, 200, null); }
+    public static BonsaiResponse ok(byte[] body) { return new BonsaiResponse(0, 200, body); }
+    public static BonsaiResponse error(int status, String msg) { return new BonsaiResponse(0, status, msg.getBytes()); }
+
     public byte[] getBytes() {
         int bodyLen = (body == null) ? 0 : body.length;
-        // Size: ID(8) + Status(4) + BodyLen(4) + Body
         ByteBuffer buffer = ByteBuffer.allocate(8 + 4 + 4 + bodyLen);
         buffer.putLong(id);
         buffer.putInt(status);
@@ -25,35 +27,16 @@ public class BonsaiResponse {
         return buffer.array();
     }
 
-    // --- Deserialization ---
     public static BonsaiResponse fromBytes(byte[] data) {
         ByteBuffer buffer = ByteBuffer.wrap(data);
         long id = buffer.getLong();
         int status = buffer.getInt();
-        int bodyLen = buffer.getInt();
-
+        int len = buffer.getInt();
         byte[] body = null;
-        if (bodyLen > 0) {
-            body = new byte[bodyLen];
+        if (len > 0) {
+            body = new byte[len];
             buffer.get(body);
         }
         return new BonsaiResponse(id, status, body);
-    }
-
-    public BonsaiResponse(int status, byte[] body) {
-        this.status = status;
-        this.body = body;
-    }
-
-    public static BonsaiResponse ok() {
-        return new BonsaiResponse(200, null);
-    }
-
-    public static BonsaiResponse ok (byte[] body) {
-        return new BonsaiResponse(200, body);
-    }
-
-    public static BonsaiResponse error(int code, String msg) {
-        return new BonsaiResponse(code, msg.getBytes());
     }
 }

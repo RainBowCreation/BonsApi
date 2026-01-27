@@ -1,7 +1,5 @@
 package net.rainbowcreation.bonsai.api.connection;
 
-import net.rainbowcreation.bonsai.api.query.QueryOp;
-
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;

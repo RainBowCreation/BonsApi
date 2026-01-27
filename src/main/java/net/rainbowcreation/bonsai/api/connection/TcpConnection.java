@@ -19,7 +19,7 @@ public class TcpConnection implements Connection {
     private DataOutputStream out;
     private final AtomicLong idGen = new AtomicLong(0);
     private final Map<Long, CompletableFuture<byte[]>> pendingRequests = new ConcurrentHashMap<>();
-    private Thread readerThread;
+
     private volatile boolean running = false;
     private final Object writeLock = new Object();
 
@@ -29,40 +29,42 @@ public class TcpConnection implements Connection {
         connect();
     }
 
-    private void connect() {
+    private synchronized void connect() {
         if (running) return;
         try {
             closeQuietly();
             this.socket = new Socket(host, port);
-            this.socket.setTcpNoDelay(true); // Critical for low latency
+            this.socket.setTcpNoDelay(true);
             this.socket.setKeepAlive(true);
 
             this.in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
             this.out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
 
             this.running = true;
-            this.readerThread = new Thread(this::readLoop, "Bonsai-Client-Reader");
-            this.readerThread.setDaemon(true);
-            this.readerThread.start();
+
+            Thread t = new Thread(this::readLoop, "Bonsai-Client-Reader");
+            t.setDaemon(true);
+            t.start();
+            System.out.println("[TcpConnection] Connected to " + host + ":" + port);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to connect to Bonsai Sidecar", e);
+            System.err.println("[TcpConnection] Connection failed: " + e.getMessage());
         }
     }
 
     private void readLoop() {
+        Socket mySocket = this.socket;
+
         while (running && !Thread.currentThread().isInterrupted()) {
             try {
-                // 1. Read Frame Length
+                if (mySocket != this.socket) return;
+
                 int len = in.readInt();
                 if (len < 0) throw new IOException("Invalid frame length");
 
-                // 2. Read Frame Data
                 byte[] data = new byte[len];
                 in.readFully(data);
 
-                // 3. Manual Deserialization (No Fory)
                 BonsaiResponse res = BonsaiResponse.fromBytes(data);
-
                 CompletableFuture<byte[]> future = pendingRequests.remove(res.id);
 
                 if (future != null) {
@@ -75,16 +77,20 @@ public class TcpConnection implements Connection {
                 }
             } catch (Exception e) {
                 if (!running) break;
+
+                System.err.println("[TcpConnection] Stream Error: " + e.getMessage());
                 shutdownPending(e);
+
                 reconnect();
+                return;
             }
         }
     }
 
     private void reconnect() {
-        running = false;
+        running = false; // Stop everything
         try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
-        connect();
+        connect(); // Start new connection & new thread
     }
 
     private void shutdownPending(Throwable t) {
@@ -106,18 +112,17 @@ public class TcpConnection implements Connection {
         pendingRequests.put(reqId, future);
 
         try {
-            // 1. Manual Serialization
             byte[] data = req.getBytes();
 
             synchronized (writeLock) {
-                out.writeInt(data.length); // Write Header
-                out.write(data);           // Write Body
+                if (!running || out == null) throw new IOException("Not connected");
+                out.writeInt(data.length);
+                out.write(data);
                 out.flush();
             }
         } catch (Exception e) {
             pendingRequests.remove(reqId);
             future.completeExceptionally(e);
-            running = false;
         }
 
         return future;
@@ -126,7 +131,6 @@ public class TcpConnection implements Connection {
     @Override
     public void stop() {
         running = false;
-        if (readerThread != null) readerThread.interrupt();
         closeQuietly();
     }
 

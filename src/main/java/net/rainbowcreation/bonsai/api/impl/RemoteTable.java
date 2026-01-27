@@ -112,8 +112,6 @@ public class RemoteTable<T> implements BonsaiTable<T> {
         });
     }
 
-    // --- Deep Conversion Logic ---
-
     private Object convertToSerializable(Object val) {
         if (val == null) return null;
         if (isPrimitiveOrBasic(val.getClass())) return val;
