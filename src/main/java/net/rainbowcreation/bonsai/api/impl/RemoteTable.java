@@ -39,7 +39,10 @@ public class RemoteTable<T> implements BonsaiTable<T> {
         if (type == Object.class || type == Map.class) return;
         List<String> indices = new ArrayList<>();
         for (Field f : getCachedFields(type)) {
-            indices.add(f.getName());
+            Class<?> type = f.getType();
+            if (type.isPrimitive() || type == String.class || type.isEnum() || Number.class.isAssignableFrom(type)) {
+                indices.add(f.getName());
+            }
         }
         Map<String, Object> payload = new HashMap<>();
         payload.put("table", table);
