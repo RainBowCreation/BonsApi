@@ -1,8 +1,8 @@
 package net.rainbowcreation.bonsai.api;
 
 import net.rainbowcreation.bonsai.api.impl.RemoteBonsai;
+import net.rainbowcreation.bonsai.api.connection.ConnectionPool;
 import net.rainbowcreation.bonsai.api.connection.HttpConnection;
-import net.rainbowcreation.bonsai.api.connection.TcpConnection;
 import net.rainbowcreation.bonsai.api.util.Stoppable;
 import net.rainbowcreation.bonsai.api.util.ThreadUtil;
 
@@ -10,7 +10,6 @@ import java.net.Socket;
 
 import java.util.ServiceLoader;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
 public class BonsApi implements Stoppable {
@@ -58,10 +57,10 @@ public class BonsApi implements Stoppable {
             }
         } catch (Throwable ignored) {}
 
-        // TCP
+        // TCP with Connection Pool
         try (Socket s = new Socket(HOST, TCP_PORT)) {
-            LOGGER.info("Connected via TCP.");
-            return new RemoteBonsai(new TcpConnection(HOST, TCP_PORT));
+            LOGGER.info("Connected via TCP with connection pooling.");
+            return new RemoteBonsai(new ConnectionPool(HOST, TCP_PORT));
         } catch (Exception ignored) {}
 
         // HTTP
