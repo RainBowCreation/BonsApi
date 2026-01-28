@@ -26,7 +26,9 @@ public class TcpConnection implements Connection {
 
     private final Semaphore pipelineLimit = new Semaphore(ClientConfig.PIPELINE_MAX_PENDING);
 
-    private final ByteArrayOutputStream writeBuffer = new ByteArrayOutputStream(ClientConfig.WRITE_FLUSH_THRESHOLD);
+    // Reusable write buffer to avoid allocations
+    private final byte[] writeBuffer = new byte[ClientConfig.WRITE_FLUSH_THRESHOLD];
+    private int writePosition = 0;
     private final Object writeLock = new Object();
     private final ScheduledExecutorService flusher;
     private final AtomicInteger pendingBytes = new AtomicInteger(0);
@@ -111,6 +113,30 @@ public class TcpConnection implements Connection {
         }
     }
 
+    private void flushBuffer() {
+        if (pendingBytes.get() > 0) {
+            synchronized (writeLock) {
+                if (pendingBytes.get() > 0) {
+                    try {
+                        doFlush();
+                    } catch (IOException e) {
+                        System.err.println("[TcpConnection] Flush error: " + e.getMessage());
+                    }
+                }
+            }
+        }
+    }
+
+    private void doFlush() throws IOException {
+        if (writePosition > 0 && out != null) {
+            // Write directly from reusable buffer (zero extra allocation)
+            out.write(writeBuffer, 0, writePosition);
+            out.flush();
+            writePosition = 0;
+            pendingBytes.set(0);
+        }
+    }
+
     private void reconnect() {
         running = false;
         // Release all blocked senders
@@ -156,18 +182,29 @@ public class TcpConnection implements Connection {
 
         try {
             byte[] data = req.getBytes();
+            int totalSize = 4 + data.length;
 
             synchronized (writeLock) {
                 if (!running || out == null) throw new IOException("Not connected");
 
-                writeBuffer.write((data.length >> 24) & 0xFF);
-                writeBuffer.write((data.length >> 16) & 0xFF);
-                writeBuffer.write((data.length >> 8) & 0xFF);
-                writeBuffer.write(data.length & 0xFF);
-                writeBuffer.write(data);
+                // Check if buffer would overflow - flush first if needed
+                if (writePosition + totalSize > writeBuffer.length) {
+                    doFlush();
+                }
 
-                int buffered = pendingBytes.addAndGet(4 + data.length);
+                // Write length prefix (4 bytes)
+                writeBuffer[writePosition++] = (byte) ((data.length >> 24) & 0xFF);
+                writeBuffer[writePosition++] = (byte) ((data.length >> 16) & 0xFF);
+                writeBuffer[writePosition++] = (byte) ((data.length >> 8) & 0xFF);
+                writeBuffer[writePosition++] = (byte) (data.length & 0xFF);
 
+                // Write data
+                System.arraycopy(data, 0, writeBuffer, writePosition, data.length);
+                writePosition += data.length;
+
+                int buffered = pendingBytes.addAndGet(totalSize);
+
+                // Flush if buffer is full or low pending requests (immediate mode)
                 if (buffered >= ClientConfig.WRITE_FLUSH_THRESHOLD || pendingRequests.size() <= 2) {
                     doFlush();
                 }
@@ -179,29 +216,6 @@ public class TcpConnection implements Connection {
         }
 
         return future;
-    }
-
-    private void flushBuffer() {
-        if (pendingBytes.get() > 0) {
-            synchronized (writeLock) {
-                if (pendingBytes.get() > 0) {
-                    try {
-                        doFlush();
-                    } catch (IOException e) {
-                        System.err.println("[TcpConnection] Flush error: " + e.getMessage());
-                    }
-                }
-            }
-        }
-    }
-
-    private void doFlush() throws IOException {
-        if (writeBuffer.size() > 0 && out != null) {
-            out.write(writeBuffer.toByteArray());
-            out.flush();
-            writeBuffer.reset();
-            pendingBytes.set(0);
-        }
     }
 
     @Override
