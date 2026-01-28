@@ -4,6 +4,7 @@ import net.rainbowcreation.bonsai.api.impl.RemoteBonsai;
 import net.rainbowcreation.bonsai.api.connection.HttpConnection;
 import net.rainbowcreation.bonsai.api.connection.TcpConnection;
 import net.rainbowcreation.bonsai.api.util.Stoppable;
+import net.rainbowcreation.bonsai.api.util.ThreadUtil;
 
 import java.net.Socket;
 
@@ -19,7 +20,7 @@ public class BonsApi implements Stoppable {
     public static int TCP_PORT = 4533;
     public static int HTTP_PORT = 8080;
 
-    public static final ExecutorService WORKER_POOL = Executors.newCachedThreadPool();
+    public static final ExecutorService WORKER_POOL = ThreadUtil.newCachedThreadPool();
     public static Logger LOGGER = Logger.getLogger(BonsApi.class.getName());
 
     // Singleton

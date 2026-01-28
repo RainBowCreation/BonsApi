@@ -1,29 +1,33 @@
 package net.rainbowcreation.bonsai.api.connection;
 
-import net.rainbowcreation.bonsai.api.BonsApi;
-
-import java.io.OutputStream;
-
-import java.net.HttpURLConnection;
-import java.net.URL;
-
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class HttpConnection implements Connection {
 
     private final String baseUrl;
+    private final ExecutorService executor;
 
     public HttpConnection(String host, int port) {
         this.baseUrl = "http://" + host + ":" + port;
+        // Dedicated pool for blocking I/O to prevent starvation of the main app/ForkJoin pool
+        this.executor = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "Bonsai-HTTP-IO");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     @Override
-    public CompletableFuture<byte[]> send(String op, String db, String table, String key, byte[] payload) {
+    public CompletableFuture<byte[]> send(RequestOp op, String db, String table, String key, byte[] payload) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                // /v1/data/{db}/{table}/ *{key}*
                 StringBuilder urlStr = new StringBuilder(baseUrl)
                         .append("/v1/data/")
                         .append(db).append("/")
@@ -35,11 +39,12 @@ public class HttpConnection implements Connection {
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 
                 conn.setRequestProperty("User-Agent", "Bonsai-Twig/1.0");
-                conn.setRequestProperty("X-Bonsai-Op", op);
+                conn.setRequestProperty("X-Bonsai-Op", op.toString());
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(10000);
 
-                // Output (Request Body)
                 if (payload != null) {
-                    conn.setRequestMethod("POST"); // Use POST for data transport
+                    conn.setRequestMethod("POST");
                     conn.setRequestProperty("Content-Type", "application/octet-stream");
                     conn.setRequestProperty("Content-Length", String.valueOf(payload.length));
                     conn.setDoOutput(true);
@@ -52,36 +57,37 @@ public class HttpConnection implements Connection {
                 }
 
                 int status = conn.getResponseCode();
+                InputStream stream = (status >= 400) ? conn.getErrorStream() : conn.getInputStream();
+
+                byte[] body = readAll(stream);
 
                 if (status >= 400) {
-                    try (InputStream es = conn.getErrorStream()) {
-                        byte[] errBytes = readAll(es);
-                        String errMsg = (errBytes != null) ? new String(errBytes) : "Unknown HTTP Error";
-                        throw new RuntimeException("HTTP " + status + ": " + errMsg);
-                    }
+                    String msg = (body != null) ? new String(body) : "Unknown HTTP Error";
+                    throw new RuntimeException("HTTP " + status + ": " + msg);
                 }
 
-                try (InputStream is = conn.getInputStream()) {
-                    return readAll(is);
-                }
+                return body;
 
             } catch (Exception e) {
                 throw new RuntimeException("HTTP Transport Error", e);
             }
-        }, BonsApi.WORKER_POOL);
+        }, executor);
     }
 
     @Override
-    public void stop() {}
+    public void stop() {
+        executor.shutdown();
+    }
 
     private byte[] readAll(InputStream is) throws Exception {
         if (is == null) return null;
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        int nRead;
-        byte[] data = new byte[4096]; // 4kb buffer
-        while ((nRead = is.read(data, 0, data.length)) != -1) {
-            buffer.write(data, 0, nRead);
+        try (ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+            int nRead;
+            byte[] data = new byte[4096];
+            while ((nRead = is.read(data, 0, data.length)) != -1) {
+                buffer.write(data, 0, nRead);
+            }
+            return buffer.toByteArray();
         }
-        return buffer.toByteArray();
     }
 }

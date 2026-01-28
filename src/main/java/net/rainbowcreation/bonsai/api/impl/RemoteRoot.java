@@ -5,10 +5,8 @@ import net.rainbowcreation.bonsai.api.BonsaiTable;
 import net.rainbowcreation.bonsai.api.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.annotation.BonsaiQuery;
 import net.rainbowcreation.bonsai.api.connection.Connection;
-import net.rainbowcreation.bonsai.api.util.ForyFactory;
+import net.rainbowcreation.bonsai.api.connection.RequestOp;
 import net.rainbowcreation.bonsai.api.util.JsonUtil;
-
-import org.apache.fory.ThreadSafeFory;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -61,7 +59,7 @@ public class RemoteRoot implements BonsaiRoot {
 
             byte[] bytes = JsonUtil.toJson(payload).getBytes(StandardCharsets.UTF_8);
 
-            connection.send("REGISTER_SCHEMA", db, null, null, bytes);
+            connection.send(RequestOp.REGISTER_SCHEMA, db, null, null, bytes);
         }
     }
 }

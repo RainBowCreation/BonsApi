@@ -23,7 +23,6 @@ public class JsonUtil {
     private static final Map<Class<?>, JsonWriter.WriteObject<Object>> pojoWriters = new HashMap<>();
 
     static {
-        // --- WRITERS (UNCHANGED) ---
         dsl.registerWriter(FilterNode.class, (writer, f) -> {
             writer.writeByte(JsonWriter.OBJECT_START);
             writer.writeAscii("\"type\":\"FILTER\",\"field\":");
@@ -55,8 +54,6 @@ public class JsonUtil {
             } catch (IOException e) { throw new RuntimeException(e); }
         });
 
-        // --- READERS (FIXED) ---
-
         dsl.registerReader(Criterion.class, reader -> {
             try {
                 if (reader.last() != '{') throw reader.newParseError("Expected '{'");
@@ -67,8 +64,6 @@ public class JsonUtil {
 
                 String type = reader.readString();
 
-                // Manual Advance: readString leaves at quote.
-                // We need to check next char.
                 byte next = reader.getNextToken();
                 if (next != ',') throw reader.newParseError("Expected ',' after type");
 
@@ -86,8 +81,6 @@ public class JsonUtil {
         });
     }
 
-    // --- MANUAL PARSERS (DIRECT CONVERTERS) ---
-
     private static FilterNode deserializeFilter(JsonReader<?> reader) throws IOException {
         String field = null;
         int op = 0;
@@ -100,20 +93,12 @@ public class JsonUtil {
             if ("field".equals(key)) {
                 field = reader.readString();
             } else if ("op".equals(key)) {
-                // FIX: Do NOT use reader.next(). Use NumberConverter directly.
-                // readKey() already positioned us on the digit.
                 op = NumberConverter.deserializeInt(reader);
             } else if ("value".equals(key)) {
-                // FIX: Use ObjectConverter directly.
                 value = ObjectConverter.deserializeObject(reader);
             } else {
                 reader.skip();
             }
-
-            // After value read, we need to handle delimiter.
-            // NumberConverter leaves us AT the delimiter.
-            // String/Object readers might leave us at end char or delimiter depending on impl.
-            // Safe logic: Check if we need to advance to comma.
 
             byte last = reader.last();
             if (last == '"' || last == ']' || last == '}') {
@@ -125,7 +110,6 @@ public class JsonUtil {
             } else if (reader.last() == '}') {
                 break;
             } else {
-                // Fallback for safety
                 throw reader.newParseError("Expected ',' or '}'");
             }
         }
@@ -167,8 +151,6 @@ public class JsonUtil {
         }
         return QueryOp.EQ;
     }
-
-    // --- STANDARD UTILS ---
 
     public static String toJson(Object instance) {
         if (instance == null) return "null";
