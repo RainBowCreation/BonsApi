@@ -1,5 +1,7 @@
 package net.rainbowcreation.bonsai.api.util;
 
+import net.rainbowcreation.bonsai.api.BonsApi;
+
 public class CastUtil {
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -37,7 +39,7 @@ public class CastUtil {
                 return Enum.valueOf((Class<Enum>) target, (String) val);
             } catch (IllegalArgumentException e) {
                 // Returning null allows partial loading rather than crash.
-                System.err.println("[CastUtil] Warning: Enum constant " + val + " not found in " + target.getSimpleName());
+                BonsApi.LOGGER.warning("Enum constant " + val + " not found in " + target.getSimpleName());
                 return null;
             }
         }

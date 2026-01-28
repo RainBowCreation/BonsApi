@@ -1,5 +1,6 @@
 package net.rainbowcreation.bonsai.api.connection;
 
+import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.api.config.ClientConfig;
 import net.rainbowcreation.bonsai.api.util.Stoppable;
 
@@ -32,7 +33,7 @@ public class ConnectionPool implements Connection, Stoppable {
             connections.add(new TcpConnection(host, port, globalId));
         }
 
-        System.out.println("[ConnectionPool] Created pool with " + poolSize + " connections to " + host + ":" + port);
+        BonsApi.LOGGER.info("Created pool with " + poolSize + " connections to " + host + ":" + port);
     }
 
     public TcpConnection acquire() {

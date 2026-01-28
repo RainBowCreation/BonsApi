@@ -1,5 +1,6 @@
 package net.rainbowcreation.bonsai.api.connection;
 
+import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.api.BonsaiRequest;
 import net.rainbowcreation.bonsai.api.BonsaiResponse;
 import net.rainbowcreation.bonsai.api.config.ClientConfig;
@@ -69,9 +70,9 @@ public class TcpConnection implements Connection {
             Thread t = new Thread(this::readLoop, "Bonsai-Client-Reader");
             t.setDaemon(true);
             t.start();
-            System.out.println("[TcpConnection] Connected to " + host + ":" + port);
+            BonsApi.LOGGER.info("Connected to " + host + ":" + port);
         } catch (Exception e) {
-            System.err.println("[TcpConnection] Connection failed: " + e.getMessage());
+            BonsApi.LOGGER.severe("Connection failed: " + e.getMessage());
         }
     }
 
@@ -104,7 +105,7 @@ public class TcpConnection implements Connection {
             } catch (Exception e) {
                 if (!running) break;
 
-                System.err.println("[TcpConnection] Stream Error: " + e.getMessage());
+                BonsApi.LOGGER.severe("Stream Error: " + e.getMessage());
                 shutdownPending(e);
 
                 reconnect();
@@ -120,7 +121,7 @@ public class TcpConnection implements Connection {
                     try {
                         doFlush();
                     } catch (IOException e) {
-                        System.err.println("[TcpConnection] Flush error: " + e.getMessage());
+                        BonsApi.LOGGER.severe("Flush error: " + e.getMessage());
                     }
                 }
             }
@@ -204,8 +205,7 @@ public class TcpConnection implements Connection {
 
                 int buffered = pendingBytes.addAndGet(totalSize);
 
-                // Flush if buffer is full or low pending requests (immediate mode)
-                if (buffered >= ClientConfig.WRITE_FLUSH_THRESHOLD || pendingRequests.size() <= 2) {
+                if (buffered >= ClientConfig.WRITE_FLUSH_THRESHOLD) {
                     doFlush();
                 }
             }

@@ -5,11 +5,14 @@ import net.rainbowcreation.bonsai.api.connection.ConnectionPool;
 import net.rainbowcreation.bonsai.api.connection.HttpConnection;
 import net.rainbowcreation.bonsai.api.util.Stoppable;
 import net.rainbowcreation.bonsai.api.util.ThreadUtil;
+import org.apache.fory.logging.LogLevel;
+import org.apache.fory.logging.LoggerFactory;
 
 import java.net.Socket;
 
 import java.util.ServiceLoader;
 import java.util.concurrent.ExecutorService;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class BonsApi implements Stoppable {
