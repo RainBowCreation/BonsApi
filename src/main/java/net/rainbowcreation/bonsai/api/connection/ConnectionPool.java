@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * A pool of TCP connections to distribute load across multiple connections.
@@ -17,6 +18,7 @@ public class ConnectionPool implements Connection, Stoppable {
     private final List<TcpConnection> connections;
     private final AtomicInteger roundRobin = new AtomicInteger(0);
     private final int poolSize;
+    private final AtomicLong globalId = new AtomicLong(0);
 
     public ConnectionPool(String host, int port) {
         this(host, port, ClientConfig.POOL_SIZE);
@@ -27,7 +29,7 @@ public class ConnectionPool implements Connection, Stoppable {
         this.connections = new ArrayList<>(poolSize);
 
         for (int i = 0; i < poolSize; i++) {
-            connections.add(new TcpConnection(host, port));
+            connections.add(new TcpConnection(host, port, globalId));
         }
 
         System.out.println("[ConnectionPool] Created pool with " + poolSize + " connections to " + host + ":" + port);

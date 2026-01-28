@@ -21,7 +21,7 @@ public class TcpConnection implements Connection {
     private Socket socket;
     private DataInputStream in;
     private DataOutputStream out;
-    private final AtomicLong idGen = new AtomicLong(0);
+    private final AtomicLong idGen;// = new AtomicLong(0);
     private final Map<Long, CompletableFuture<byte[]>> pendingRequests = new ConcurrentHashMap<>();
 
     private final Semaphore pipelineLimit = new Semaphore(ClientConfig.PIPELINE_MAX_PENDING);
@@ -33,9 +33,10 @@ public class TcpConnection implements Connection {
 
     private volatile boolean running = false;
 
-    public TcpConnection(String host, int port) {
+    public TcpConnection(String host, int port, AtomicLong idGen) {
         this.host = host;
         this.port = port;
+        this.idGen = idGen;
         this.flusher = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "Bonsai-Flusher");
             t.setDaemon(true);

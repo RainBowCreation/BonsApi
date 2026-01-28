@@ -4,7 +4,7 @@ import net.rainbowcreation.bonsai.api.query.Query;
 
 public interface BonsaiTable<T> {
     /**
-     * Default get wait forever.
+     * Default get wait until confirmation.
      */
     default T get(String key) {
         return getAsync(key).get();
@@ -12,18 +12,18 @@ public interface BonsaiTable<T> {
     BonsaiFuture<T> getAsync(String key);
 
     /**
-     * Default set just fire and forget.
+     * Default set wait until confirmation.
      */
     default void set(String key, T value) {
-        setAsync(key,value);
+        setAsync(key,value).get(); // temporary change to wait to test performance
     }
     BonsaiFuture<Void> setAsync(String key, T value);
 
     /**
-     * Default delete just fire amd forget.
+     * Default delete wait until confirmation.
      */
     default void delete(String key) {
-        deleteAsync(key);
+        deleteAsync(key).get(); // temporary change to wait to test performance
     }
     BonsaiFuture<Void> deleteAsync(String key);
 
@@ -38,7 +38,7 @@ public interface BonsaiTable<T> {
     }
 
     /**
-     * Default exists wait forever.
+     * Default exists wait until confirmation.
      */
     default Boolean exists(String key) {
         return existsAsync(key).get();
