@@ -14,6 +14,8 @@ tasks.named('shadowJar') {
     archiveVersion.set(rootProject.version)
     archiveClassifier.set('')
     relocate 'com.dslplatform', 'net.rainbowcreation.bonsai.vendored.dsljson'
+    relocate 'dsl_json.java.util', 'net.rainbowcreation.bonsai.vendored.dsljson.util'
+    relocate 'org.apache.fory', 'net.rainbowcreation.bonsai.vendored.fory'
 }
 
 tasks.named('jar') {
