@@ -3,8 +3,10 @@ package net.rainbowcreation.bonsai.api.connection;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+
 import java.net.HttpURLConnection;
 import java.net.URL;
+
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;

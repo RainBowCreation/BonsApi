@@ -1,16 +1,20 @@
 package net.rainbowcreation.bonsai.api.util;
 
-import com.dslplatform.json.*;
-import com.dslplatform.json.runtime.Settings;
 import net.rainbowcreation.bonsai.api.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.query.*;
 
+import com.dslplatform.json.*;
+import com.dslplatform.json.runtime.Settings;
+
 import java.io.IOException;
+
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+
 import java.nio.charset.StandardCharsets;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;

@@ -5,8 +5,11 @@ import net.rainbowcreation.bonsai.api.BonsaiResponse;
 import net.rainbowcreation.bonsai.api.config.ClientConfig;
 
 import java.io.*;
+
 import java.net.Socket;
+
 import java.nio.charset.StandardCharsets;
+
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
