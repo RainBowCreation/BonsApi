@@ -7,8 +7,8 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ThreadUtil {
-    public static ExecutorService newWorkerPool(int multiplier) {
-        return Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * multiplier);
+    public static ExecutorService newWorkerPool(int size) {
+        return Executors.newFixedThreadPool(size);
     }
 
     public static ExecutorService newSingleThreadExecutor() {
