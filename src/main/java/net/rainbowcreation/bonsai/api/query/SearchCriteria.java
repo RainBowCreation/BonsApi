@@ -29,12 +29,20 @@ public class SearchCriteria {
     }
 
     public SearchCriteria and(SearchCriteria sub) {
-        nodes.add(new GroupNode("AND", sub.nodes));
+        Criterion built = sub.buildRoot();
+        if (built != null) {
+            nodes.add(built);
+        }
+        this.currentLogic = "AND";
         return this;
     }
 
     public SearchCriteria or(SearchCriteria sub) {
-        nodes.add(new GroupNode("OR", sub.nodes));
+        Criterion built = sub.buildRoot();
+        if (built != null) {
+            nodes.add(built);
+        }
+        this.currentLogic = "OR";
         return this;
     }
 
@@ -43,6 +51,6 @@ public class SearchCriteria {
     public Criterion buildRoot() {
         if (nodes.isEmpty()) return null;
         if (nodes.size() == 1) return nodes.get(0);
-        return new GroupNode("AND", new ArrayList<>(nodes));
+        return new GroupNode(currentLogic, new ArrayList<>(nodes));
     }
 }
