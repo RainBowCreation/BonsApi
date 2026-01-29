@@ -28,6 +28,10 @@ public class BonsApi implements Stoppable {
     // Singleton
     private static volatile Bonsai INSTANCE;
 
+    static {
+        LOGGER.setLevel(Level.WARNING);
+    }
+
     public static Bonsai getBonsai() {
         if (INSTANCE != null) return INSTANCE;
         synchronized (BonsApi.class) {
@@ -73,5 +77,9 @@ public class BonsApi implements Stoppable {
         } catch (Exception e) {
             throw new RuntimeException(" Fatal: No connection method found. Is Bonsai running?", e);
         }
+    }
+
+    public static void setLogLevel(Level level) {
+        LOGGER.setLevel(level);
     }
 }
