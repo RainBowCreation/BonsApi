@@ -1,6 +1,6 @@
 # BonsApi
 
-A high-performance distributed key-value database client for Java applications. BonsApi provides a simple, intuitive API to store and retrieve data with automatic caching, serialization, and query support.
+A high-performance distributed key-value database client for Java applications. BonsApi provides a simple, intuitive API to store and retrieve data with automatic caching, serialization, connection pooling, and query support.
 
 ## Features
 
@@ -8,6 +8,9 @@ A high-performance distributed key-value database client for Java applications. 
 - Automatic object serialization (POJOs, Lists, Maps, nested objects)
 - Query support with filtering, sorting, and pagination
 - Async-first API with `BonsaiFuture` for non-blocking operations
+- Connection pooling with round-robin + least-pending load balancing
+- Request pipelining (up to 100 concurrent requests per connection)
+- Write coalescing for efficient network utilization
 - Multi-Release JAR supporting Java 8, 11, 17, 21, and 25
 - Automatic connection management (TCP with HTTP fallback)
 
@@ -66,7 +69,7 @@ Bonsai bonsai = BonsApi.getBonsai();
 BonsaiRoot db = bonsai.getRoot("myapp");
 BonsaiTable<Player> players = db.use(Player.class);
 
-// Store data
+// Store data (fire-and-forget, async write-behind)
 players.set("player123", new Player("Steve", 42, System.currentTimeMillis()));
 
 // Retrieve data
@@ -92,10 +95,10 @@ future.map(p -> p.getLevel())
 // Wait when needed
 Player player = future.get();
 
-// Fire-and-forget writes (default behavior)
+// Fire-and-forget writes (default behavior - fastest)
 players.set("player123", player);
 
-// Wait for write confirmation
+// Wait for server acknowledgment
 players.setAsync("player123", player).get();
 ```
 
@@ -106,20 +109,19 @@ Enable queries on specific fields using the `@BonsaiQuery` annotation:
 ```java
 import net.rainbowcreation.bonsai.api.annotation.BonsaiQuery;
 
-// Optional add @BonsaiQuery here will enable query on every field.
+// Optional: Add @BonsaiQuery at class level to enable query on all fields
 public class Player {
     private String name;
 
-    @BonsaiQuery  // Enable queries on this field, no need to add here if already put it on the class scope
+    @BonsaiQuery  // Enable queries on this field
     private int level;
 
     @BonsaiQuery
     private String region;
 
-    // You can add @BonsaiIgnore to ignore this field to query if @BonsaiQuery is on class scope
+    @BonsaiIgnore  // Exclude from queries if @BonsaiQuery is on class
     private String secret;
-    
-    
+
     // ...
 }
 ```
@@ -146,6 +148,18 @@ List<Player> results = players.find()
 long count = players.find()
     .where("level", QueryOp.GT, 50)
     .count();
+
+// Bulk updates
+players.find()
+    .where("region", QueryOp.EQ, "US")
+    .setAsync("status", "active")
+    .get();
+
+// Bulk deletes
+players.find()
+    .where("lastLogin", QueryOp.LT, cutoffTime)
+    .deleteAsync()
+    .get();
 ```
 
 ### Query Operators
@@ -176,10 +190,30 @@ BonsApi.HTTP_PORT = 8080;        // Default: 8080 (fallback)
 Bonsai bonsai = BonsApi.getBonsai();
 ```
 
+### System Properties
+
+Fine-tune performance via system properties:
+
+```bash
+java -Dbonsai.pool.size=8 \
+     -Dbonsai.pipeline.max=200 \
+     -Dbonsai.write.flushThreshold=131072 \
+     -jar myapp.jar
+```
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `bonsai.pool.size` | 4 | Number of connections in the pool |
+| `bonsai.pipeline.max` | 100 | Max pending requests per connection |
+| `bonsai.write.flushThreshold` | 65536 | Write buffer flush threshold (bytes) |
+| `bonsai.write.flushInterval` | 1 | Auto-flush interval (ms) |
+| `bonsai.socket.sendBuffer` | 131072 | Socket send buffer size |
+| `bonsai.socket.receiveBuffer` | 131072 | Socket receive buffer size |
+
 ## Shutdown
 
 ```java
-// Graceful shutdown
+// Graceful shutdown (flushes pending writes)
 BonsApi.shutdown();
 ```
 
@@ -194,11 +228,32 @@ BonsApi automatically serializes:
 - Nested objects
 - Arrays
 
+## Architecture
+
+```
+Your Application
+       ↓
+   BonsApi (ConnectionPool)
+       ↓ TCP (pipelined requests)
+   Edge Server (Caffeine cache)
+       ↓
+   Relay Server (optional proxy)
+       ↓
+   Master Server (MySQL + WAL)
+```
+
 ## Requirements
 
 - Java 8 or higher (optimized for Java 21+)
 - Bonsai server running (Edge, Relay, or Master)
 
+## Performance Tips
+
+1. **Use async operations** for throughput - `setAsync()` returns immediately
+2. **Batch related operations** - they'll be coalesced in the write buffer
+3. **Increase pool size** for high-concurrency workloads (`-Dbonsai.pool.size=8`)
+4. **Add query indices** only on fields you actually query (`@BonsaiQuery`)
+
 ## Status
 
-This project is under active development. API may change between versions.
+This project is under active development. API is stable for 0.1.x releases.
