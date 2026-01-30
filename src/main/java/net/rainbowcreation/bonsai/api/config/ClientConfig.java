@@ -29,4 +29,9 @@ public class ClientConfig {
     /** Socket receive buffer size (bytes). Default: 128KB */
     public static final int SOCKET_RECEIVE_BUFFER =
             Integer.getInteger("bonsai.socket.receiveBuffer", 131072);
+
+    /** Profiler */
+    public static final boolean PROFILER_ENABLED = Boolean.getBoolean("bonsai.client.profiler.enabled");
+    public static final String PROFILER_OUTPUT_FILE = System.getProperty("bonsai.client.profiler.output", "client-profile.log");
+    public static final int PROFILER_SAMPLE_RATE = Integer.getInteger("bonsai.client.profiler.sampleRate", 1);
 }

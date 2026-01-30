@@ -4,6 +4,7 @@ import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.api.BonsaiRequest;
 import net.rainbowcreation.bonsai.api.BonsaiResponse;
 import net.rainbowcreation.bonsai.api.config.ClientConfig;
+import net.rainbowcreation.bonsai.api.util.ClientProfiler;
 
 import java.io.*;
 
@@ -203,6 +204,8 @@ public class TcpConnection implements Connection {
                 System.arraycopy(data, 0, writeBuffer, writePosition, data.length);
                 writePosition += data.length;
 
+                ClientProfiler.onSend(reqId);
+
                 int buffered = pendingBytes.addAndGet(totalSize);
 
                 if (buffered >= ClientConfig.WRITE_FLUSH_THRESHOLD) {
@@ -222,7 +225,6 @@ public class TcpConnection implements Connection {
     public void stop() {
         running = false;
         flusher.shutdown();
-        // Final flush
         synchronized (writeLock) {
             try {
                 doFlush();

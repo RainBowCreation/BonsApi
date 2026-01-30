@@ -244,7 +244,7 @@ Your Application
 
 ## Requirements
 
-- Java 8 or higher (optimized for Java 21+)
+- Java 8 or higher
 - Bonsai server running (Edge, Relay, or Master)
 
 ## Performance Tips
