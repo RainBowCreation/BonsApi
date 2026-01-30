@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 
 public class RemoteRoot implements BonsaiRoot {
     private final Connection connection;
@@ -59,7 +60,11 @@ public class RemoteRoot implements BonsaiRoot {
 
             byte[] bytes = JsonUtil.toJson(payload).getBytes(StandardCharsets.UTF_8);
 
-            connection.send(RequestOp.REGISTER_SCHEMA, db, null, null, bytes);
+            try {
+                connection.send(RequestOp.REGISTER_SCHEMA, db, null, null, bytes).get(5, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new RuntimeException("Schema registration failed", e);
+            }
         }
     }
 }

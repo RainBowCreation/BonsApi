@@ -22,23 +22,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import sun.misc.Unsafe;
-
-public class JsonUtil {
+public class JsonUtil extends AUnsafe{
 
     private static final DslJson<Object> dsl = new DslJson<>(Settings.withRuntime().includeServiceLoader());
     private static final ThreadLocal<JsonWriter> localWriter = ThreadLocal.withInitial(dsl::newWriter);
     private static final Map<Class<?>, JsonWriter.WriteObject<Object>> pojoWriters = new HashMap<>();
 
-    private static final Unsafe unsafe;
     static {
-        try {
-            Field f = Unsafe.class.getDeclaredField("theUnsafe");
-            f.setAccessible(true);
-            unsafe = (Unsafe) f.get(null);
-        } catch (Exception e) {
-            throw new RuntimeException("Could not access Unsafe", e);
-        }
 
         dsl.registerWriter(FilterNode.class, (writer, f) -> {
             writer.writeByte(JsonWriter.OBJECT_START);

@@ -6,6 +6,7 @@ import net.rainbowcreation.bonsai.api.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.connection.Connection;
 import net.rainbowcreation.bonsai.api.connection.RequestOp;
 import net.rainbowcreation.bonsai.api.query.*;
+import net.rainbowcreation.bonsai.api.util.AUnsafe;
 import net.rainbowcreation.bonsai.api.util.CastUtil;
 import net.rainbowcreation.bonsai.api.util.ForyFactory;
 import net.rainbowcreation.bonsai.api.util.JsonUtil;
@@ -21,7 +22,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class RemoteQuery<T> implements Query<T> {
+public class RemoteQuery<T> extends AUnsafe implements Query<T> {
 
     private final Connection conn;
     private final String db;
@@ -162,9 +163,10 @@ public class RemoteQuery<T> implements Query<T> {
         }, BonsApi.WORKER_POOL));
     }
 
+    @SuppressWarnings("unchecked")
     private T mapToPojo(Map<?, ?> map, Class<T> clazz) {
         try {
-            T instance = clazz.getConstructor().newInstance();
+            T instance = (T) unsafe.allocateInstance(clazz);
             for (Field f : getCachedFields(clazz)) {
                 Object val = map.get(f.getName());
                 if (val != null) {

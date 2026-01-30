@@ -7,6 +7,7 @@ import net.rainbowcreation.bonsai.api.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.connection.Connection;
 import net.rainbowcreation.bonsai.api.connection.RequestOp;
 import net.rainbowcreation.bonsai.api.query.Query;
+import net.rainbowcreation.bonsai.api.util.AUnsafe;
 import net.rainbowcreation.bonsai.api.util.ForyFactory;
 import net.rainbowcreation.bonsai.api.util.JsonUtil;
 
@@ -20,26 +21,13 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
-import sun.misc.Unsafe;
-
-public class RemoteTable<T> implements BonsaiTable<T> {
+public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     private final Connection conn;
     private final String db, table;
     private final Class<T> type;
 
     private static final ThreadSafeFory FORY = ForyFactory.get();
     private static final Map<Class<?>, List<Field>> fieldCache = new ConcurrentHashMap<>();
-
-    private static final Unsafe unsafe;
-    static {
-        try {
-            Field f = Unsafe.class.getDeclaredField("theUnsafe");
-            f.setAccessible(true);
-            unsafe = (Unsafe) f.get(null);
-        } catch (Exception e) {
-            throw new RuntimeException("Could not access Unsafe in RemoteTable", e);
-        }
-    }
 
     public RemoteTable(Connection conn, String db, String table, Class<T> type) {
         this.conn = conn;
