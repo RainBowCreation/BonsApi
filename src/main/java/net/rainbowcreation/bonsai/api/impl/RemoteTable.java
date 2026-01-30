@@ -22,6 +22,8 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
+import sun.misc.Unsafe;
+
 public class RemoteTable<T> implements BonsaiTable<T> {
     private final Connection conn;
     private final String db, table;
@@ -29,6 +31,17 @@ public class RemoteTable<T> implements BonsaiTable<T> {
 
     private static final ThreadSafeFory FORY = ForyFactory.get();
     private static final Map<Class<?>, List<Field>> fieldCache = new ConcurrentHashMap<>();
+
+    private static final Unsafe unsafe;
+    static {
+        try {
+            Field f = Unsafe.class.getDeclaredField("theUnsafe");
+            f.setAccessible(true);
+            unsafe = (Unsafe) f.get(null);
+        } catch (Exception e) {
+            throw new RuntimeException("Could not access Unsafe in RemoteTable", e);
+        }
+    }
 
     public RemoteTable(Connection conn, String db, String table, Class<T> type) {
         this.conn = conn;
@@ -162,9 +175,11 @@ public class RemoteTable<T> implements BonsaiTable<T> {
         return null;
     }
 
+    @SuppressWarnings("unchecked")
     private <R> R mapToPojo(Map<String, Object> map, Class<R> clazz) {
         try {
-            R instance = clazz.getConstructor().newInstance();
+            R instance = (R) unsafe.allocateInstance(clazz);
+
             for (Field f : getCachedFields(clazz)) {
                 Object val = map.get(f.getName());
                 if (val != null) {
@@ -173,11 +188,12 @@ public class RemoteTable<T> implements BonsaiTable<T> {
             }
             return instance;
         } catch (Exception e) {
-            // Fallback
             try {
                 String json = JsonUtil.toJson(map);
                 return JsonUtil.fromJson(json, clazz);
             } catch (Exception ex) {
+                System.err.println("[Bonsai] mapToPojo Failed for " + clazz.getSimpleName());
+                ex.printStackTrace();
                 return null;
             }
         }
