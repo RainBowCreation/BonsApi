@@ -23,12 +23,11 @@ public class TcpConnection implements Connection {
     private Socket socket;
     private DataInputStream in;
     private DataOutputStream out;
-    private final AtomicLong idGen;// = new AtomicLong(0);
+    private final AtomicLong idGen;
     private final Map<Long, CompletableFuture<byte[]>> pendingRequests = new ConcurrentHashMap<>();
 
     private final Semaphore pipelineLimit = new Semaphore(ClientConfig.PIPELINE_MAX_PENDING);
 
-    // Reusable write buffer to avoid allocations
     private final byte[] writeBuffer = new byte[ClientConfig.WRITE_FLUSH_THRESHOLD];
     private int writePosition = 0;
     private final Object writeLock = new Object();
@@ -93,6 +92,7 @@ public class TcpConnection implements Connection {
                 BonsaiResponse res = BonsaiResponse.fromBytes(data);
                 CompletableFuture<byte[]> future = pendingRequests.remove(res.id);
 
+                ClientProfiler.onResponse(res.id);
                 pipelineLimit.release();
 
                 if (future != null) {
@@ -131,7 +131,8 @@ public class TcpConnection implements Connection {
 
     private void doFlush() throws IOException {
         if (writePosition > 0 && out != null) {
-            // Write directly from reusable buffer (zero extra allocation)
+            ClientProfiler.onFlushAll(pendingRequests.keySet());
+
             out.write(writeBuffer, 0, writePosition);
             out.flush();
             writePosition = 0;

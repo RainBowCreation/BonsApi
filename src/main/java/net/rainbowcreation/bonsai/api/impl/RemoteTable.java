@@ -16,8 +16,6 @@ import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 
-import java.nio.charset.StandardCharsets;
-
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,27 +46,6 @@ public class RemoteTable<T> implements BonsaiTable<T> {
         this.db = db;
         this.table = table;
         this.type = type;
-        registerSchema();
-    }
-
-    private void registerSchema() {
-        if (type == Object.class || type == Map.class) return;
-        List<String> indices = new ArrayList<>();
-        for (Field f : getCachedFields(type)) {
-            Class<?> type = f.getType();
-            if (type.isPrimitive() || type == String.class || type.isEnum() || Number.class.isAssignableFrom(type)) {
-                indices.add(f.getName());
-            }
-        }
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("table", table);
-        payload.put("indices", indices);
-        byte[] bytes = JsonUtil.toJson(payload).getBytes(StandardCharsets.UTF_8);
-        try {
-            conn.send(RequestOp.REGISTER_SCHEMA, db, table, null, bytes).join();
-        } catch (Exception e) {
-            System.err.println("[Bonsai] Warning: Schema registration failed: " + e.getMessage());
-        }
     }
 
     @Override
