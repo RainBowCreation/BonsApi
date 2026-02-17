@@ -1,0 +1,39 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'com.gradleup.shadow'
+}
+
+dependencies {
+    implementation 'com.dslplatform:dsl-json:2.0.2'
+    implementation 'org.apache.fory:fory-core:0.14.1'
+    implementation 'org.jctools:jctools-core:4.0.5'
+}
+
+tasks.named('shadowJar') {
+    archiveBaseName.set('BonsApi')
+    archiveVersion.set(rootProject.version)
+    archiveClassifier.set('')
+    relocate 'com.dslplatform', 'net.rainbowcreation.bonsai.vendored.dsljson'
+    relocate 'dsl_json.java.util', 'net.rainbowcreation.bonsai.vendored.dsljson.util'
+    relocate 'org.apache.fory', 'net.rainbowcreation.bonsai.vendored.fory'
+    relocate 'org.jctools', 'net.rainbowcreation.bonsai.vendored.jctools'
+}
+
+tasks.named('jar') {
+    dependsOn('shadowJar')
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            groupId = 'net.rainbowcreation.bonsai'
+            artifactId = 'BonsApi'
+            version = rootProject.version + '-SNAPSHOT'
+            from components.java
+        }
+    }
+    repositories {
+        maven { url = uri("${rootProject.projectDir}/.repo/releases") }
+    }
+}

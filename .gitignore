@@ -1,0 +1,8 @@
+.repo
+.idea
+.gradle
+build
+*/build
+gradlew
+gradlew.bat
+gradle
