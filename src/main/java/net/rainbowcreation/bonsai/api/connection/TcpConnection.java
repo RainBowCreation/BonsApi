@@ -1,5 +1,6 @@
 package net.rainbowcreation.bonsai.api.connection;
 
+import net.rainbowcreation.bonsai.auth.BonsaiAuth;
 import net.rainbowcreation.bonsai.connection.RequestOp;
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.BonsaiRequest;
@@ -17,7 +18,6 @@ import java.nio.charset.StandardCharsets;
 
 import java.util.Map;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TcpConnection implements Connection {
@@ -42,6 +42,7 @@ public class TcpConnection implements Connection {
 
     private volatile boolean running = false;
     private volatile InvalidationCallback invalidationCallback;
+    private volatile byte[] sessionNonce;
 
     public TcpConnection(String host, int port, AtomicInteger idGen) {
         this.host = host;
@@ -65,6 +66,18 @@ public class TcpConnection implements Connection {
 
             this.in = new DataInputStream(new BufferedInputStream(socket.getInputStream(), 65536));
             this.out = new DataOutputStream(socket.getOutputStream());
+
+            // Read server handshake: [1 byte mode][8 bytes nonce]
+            byte mode = in.readByte();
+            byte[] nonce = new byte[8];
+            in.readFully(nonce);
+            this.sessionNonce = nonce;
+
+            if (mode == 0x01) {
+                byte[] hmac = BonsaiAuth.computeHmac(Config.DB_PASSWORD, nonce, "");
+                out.write(hmac);
+                out.flush();
+            }
 
             this.running = true;
 
@@ -266,6 +279,10 @@ public class TcpConnection implements Connection {
     @Override
     public void setInvalidationCallback(InvalidationCallback callback) {
         this.invalidationCallback = callback;
+    }
+
+    public byte[] getNonce() {
+        return sessionNonce;
     }
 
     public int getPendingCount() {

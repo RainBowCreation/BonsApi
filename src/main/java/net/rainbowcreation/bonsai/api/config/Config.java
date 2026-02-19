@@ -35,4 +35,6 @@ public class Config {
     public static final boolean PROFILER_ENABLED = Boolean.getBoolean("bonsai.profiler.enabled");
     public static final String PROFILER_OUTPUT_FILE = System.getProperty("bonsai.profiler.output", "client-profile.log");
     public static final int PROFILER_SAMPLE_RATE = Integer.getInteger("bonsai.profiler.sampleRate", 1);
+
+    public static final String DB_PASSWORD = System.getProperty("bonsai.db.password", "");
 }
