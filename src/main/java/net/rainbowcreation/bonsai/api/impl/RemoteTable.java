@@ -444,6 +444,16 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
         return new RemoteQuery<>(conn, dbId, tableId, type);
     }
 
+    @Override
+    @SuppressWarnings("unchecked")
+    public BonsaiFuture<Map<String, Object>> statusAsync() {
+        CompletableFuture<byte[]> io = conn.send(RequestOp.STATUS, dbId, tableId, "", null, (byte) 0x01);
+        return new BonsaiFuture<>(io.thenApplyAsync(bytes -> {
+            if (bytes == null || bytes.length == 0) return Collections.emptyMap();
+            return (Map<String, Object>) FORY.deserialize(bytes);
+        }, BonsApi.WORKER_POOL));
+    }
+
     private List<Field> getCachedFields(Class<?> clazz) {
         return fieldCache.computeIfAbsent(clazz, c -> {
             List<Field> list = new ArrayList<>();

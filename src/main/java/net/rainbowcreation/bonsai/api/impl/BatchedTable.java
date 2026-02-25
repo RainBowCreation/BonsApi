@@ -134,6 +134,11 @@ public class BatchedTable<T> implements BonsaiTable<T> {
     }
 
     @Override
+    public BonsaiFuture<Map<String, Object>> statusAsync() {
+        return delegate.statusAsync();
+    }
+
+    @Override
     public BonsaiTable<T> withBatch(long delayMs) {
         return new BatchedTable<>(delegate, delayMs);
     }
