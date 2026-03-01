@@ -1,5 +1,6 @@
 package net.rainbowcreation.bonsai.api.util;
 
+import java.lang.reflect.Method;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -7,7 +8,26 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ThreadUtil {
+    private static final Method VIRTUAL_EXECUTOR = probeVirtualThreads();
+
+    private static Method probeVirtualThreads() {
+        try {
+            return Executors.class.getMethod("newVirtualThreadPerTaskExecutor");
+        } catch (NoSuchMethodException e) {
+            return null;
+        }
+    }
+
+    private static ExecutorService virtualExecutor() {
+        try {
+            return (ExecutorService) VIRTUAL_EXECUTOR.invoke(null);
+        } catch (Exception e) {
+            return Executors.newCachedThreadPool();
+        }
+    }
+
     public static ExecutorService newWorkerPool(int size) {
+        if (VIRTUAL_EXECUTOR != null) return virtualExecutor();
         return Executors.newFixedThreadPool(size);
     }
 
@@ -16,6 +36,7 @@ public class ThreadUtil {
     }
 
     public static ExecutorService newTaskExecutor() {
+        if (VIRTUAL_EXECUTOR != null) return virtualExecutor();
         return Executors.newCachedThreadPool();
     }
 
