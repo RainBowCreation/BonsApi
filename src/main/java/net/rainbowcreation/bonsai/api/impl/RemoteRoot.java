@@ -11,6 +11,8 @@ import net.rainbowcreation.bonsai.connection.RequestOp;
 import net.rainbowcreation.bonsai.util.JsonUtil;
 import net.rainbowcreation.bonsai.registry.IdRegistry;
 
+import org.checkerframework.checker.nullness.qual.NonNull;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 
@@ -72,6 +74,7 @@ public class RemoteRoot implements BonsaiRoot {
         return table;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public <T> BonsaiTable<T> use(String tableName, Class<T> type, boolean safe) {
         short dbId = getOrRegisterDatabaseId();
@@ -90,9 +93,6 @@ public class RemoteRoot implements BonsaiRoot {
         return table;
     }
 
-    /**
-     * Scan class and register schema, returning the table ID.
-     */
     private short scanAndRegisterSchema(Class<?> type) {
         String tableName = type.getSimpleName();
 
@@ -102,6 +102,38 @@ public class RemoteRoot implements BonsaiRoot {
             return cached;
         }
 
+        Map<String, Object> payload = getStringObjectMap(type, tableName);
+
+        byte[] bytes = JsonUtil.toJson(payload).getBytes(StandardCharsets.UTF_8);
+
+        try {
+            byte[] response = connection.send(RequestOp.REGISTER_SCHEMA, (short) 0, (short) 0, db, bytes, (byte) 0x01).get(5, TimeUnit.SECONDS);
+
+            
+            if (response != null && response.length >= 3) {
+                ByteBuffer buf = ByteBuffer.wrap(response);
+                short dbId = (short) (buf.get() & 0xFF);
+                short tableId = buf.getShort();
+
+
+                idRegistry.registerDatabase(db, dbId);
+                idRegistry.registerTable(db, tableName, tableId);
+
+                if (cachedDbId == null) {
+                    cachedDbId = dbId;
+                }
+
+                return tableId;
+            } else {
+                throw new RuntimeException("Invalid response from REGISTER_SCHEMA: expected 3 bytes, got " +
+                    (response == null ? "null" : response.length));
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Schema registration failed for " + tableName, e);
+        }
+    }
+
+    private @NonNull Map<String, Object> getStringObjectMap(Class<?> type, String tableName) {
         List<Map<String, Object>> columns = new ArrayList<>();
         boolean classLevelQuery = type.isAnnotationPresent(BonsaiQuery.class);
 
@@ -150,43 +182,13 @@ public class RemoteRoot implements BonsaiRoot {
             }
         }
 
-        
+
         Map<String, Object> payload = new HashMap<>();
         payload.put("table", tableName);
         payload.put("columns", columns);
-
-        byte[] bytes = JsonUtil.toJson(payload).getBytes(StandardCharsets.UTF_8);
-
-        try {
-            byte[] response = connection.send(RequestOp.REGISTER_SCHEMA, (short) 0, (short) 0, db, bytes, (byte) 0x01).get(5, TimeUnit.SECONDS);
-
-            
-            if (response != null && response.length >= 3) {
-                ByteBuffer buf = ByteBuffer.wrap(response);
-                short dbId = (short) (buf.get() & 0xFF);
-                short tableId = buf.getShort();
-
-
-                idRegistry.registerDatabase(db, dbId);
-                idRegistry.registerTable(db, tableName, tableId);
-
-                if (cachedDbId == null) {
-                    cachedDbId = dbId;
-                }
-
-                return tableId;
-            } else {
-                throw new RuntimeException("Invalid response from REGISTER_SCHEMA: expected 3 bytes, got " +
-                    (response == null ? "null" : response.length));
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Schema registration failed for " + tableName, e);
-        }
+        return payload;
     }
 
-    /**
-     * Get or register database ID.
-     */
     private short getOrRegisterDatabaseId() {
         if (cachedDbId != null) {
             return cachedDbId;
@@ -218,9 +220,6 @@ public class RemoteRoot implements BonsaiRoot {
         }
     }
 
-    /**
-     * Get or register table ID (for string-based table names without schema).
-     */
     private short getOrRegisterTableId(String tableName) {
         
         Short cached = idRegistry.getTableId(db, tableName);
@@ -282,7 +281,6 @@ public class RemoteRoot implements BonsaiRoot {
         return "VARCHAR(255)";
     }
 
-    @SuppressWarnings("unchecked")
     private <T> BonsaiTable<T> createCachedTable(RemoteTable<T> remoteTable, String tableName) {
         if (!invalidationCallbackRegistered) {
             synchronized (this) {

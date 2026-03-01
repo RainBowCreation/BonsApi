@@ -270,12 +270,6 @@ public class TcpConnection implements Connection {
         try { if (socket != null) socket.close(); } catch (Exception ignored) {}
     }
 
-    /**
-     * Registers a callback to handle cache invalidation notifications from the server.
-     * This is required for client-side caching to work correctly.
-     *
-     * @param callback the invalidation callback
-     */
     @Override
     public void setInvalidationCallback(InvalidationCallback callback) {
         this.invalidationCallback = callback;

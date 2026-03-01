@@ -32,9 +32,9 @@ import java.util.concurrent.TimeUnit;
 public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     private final Connection conn;
     private final String db, table;
-    public final short dbId, tableId;  // Compact IDs for wire protocol
+    public final short dbId, tableId;
     private final Class<T> type;
-    private final boolean safe;  // If true, wait for WAL and broadcast. If false, fire-and-forget.
+    private final boolean safe;
 
     private static final ThreadSafeFory FORY = ForyFactory.get();
     private static final Map<Class<?>, List<Field>> fieldCache = new ConcurrentHashMap<>();
@@ -140,7 +140,7 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             return new byte[] { MAGIC_BYTE, TYPE_BOOLEAN, (byte) ((Boolean) obj ? 0x01 : 0x00) };
         }
 
-        return null; // Not a supported primitive type
+        return null;
     }
 
     private Object decodePrimitive(byte[] bytes) {
@@ -244,7 +244,6 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             return BonsaiFuture.completed(Collections.emptyMap());
         }
 
-        // Check local cache for each key, collect misses
         Map<String, T> cachedResults = new HashMap<>();
         List<String> missingKeys = new ArrayList<>();
         for (String k : keys) {
@@ -256,7 +255,6 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             }
         }
 
-        // All cached
         if (missingKeys.isEmpty()) {
             return BonsaiFuture.completed(cachedResults);
         }

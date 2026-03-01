@@ -7,60 +7,43 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+
 import java.time.Duration;
+
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * HTTP-based connection to a Bonsai Edge server (Java 11+ implementation).
- *
- * <p>Uses {@link HttpClient} with HTTP/1.1 keep-alive for efficient connection reuse.
- * All payload bytes are sent as {@code application/octet-stream} — serialization is
- * performed on the client side, identical to the TCP transport.
- *
- * <p>Key is sent via {@code X-Bonsai-Key} header (not URL path) to avoid
- * encoding issues with special characters.
- *
- * <p>Flags (safe-mode bit 0x01, TTL bit 0x02) are forwarded via
- * {@code X-Bonsai-Flags} header so the Edge passes them to the handler correctly.
- *
- * <p>SUBSCRIBE is a no-op — HTTP/1.1 has no server-push; client-side cache
- * invalidation is not supported over HTTP.
- */
 public class HttpConnection implements Connection {
 
     private final String baseUrl;
     private final HttpClient client;
     private final String bearerToken;
 
-    // Reverse-map: numeric IDs → string names, populated after REGISTER_SCHEMA responses
     private final Map<Short, String> dbNames = new ConcurrentHashMap<>();
-    private final Map<Long, String> tableNames = new ConcurrentHashMap<>(); // key = packIds(dbId, tableId)
+    private final Map<Long, String> tableNames = new ConcurrentHashMap<>();
 
     public HttpConnection(String host, int port) {
         this.baseUrl = "http://" + host + ":" + port + "/v1/data";
         this.bearerToken = Config.DB_PASSWORD;
         this.client = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_1_1) // Keep-alive connection reuse
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
     }
 
     @Override
     public CompletableFuture<byte[]> send(RequestOp op, short dbId, short tableId, String key, byte[] payload, byte flags) {
-        // SUBSCRIBE has no HTTP equivalent — the Edge cannot push to HTTP clients
         if (op == RequestOp.SUBSCRIBE) {
             return CompletableFuture.completedFuture(new byte[0]);
         }
 
-        // Resolve string names from registry
         final String dbName, tableName;
         try {
             if (op == RequestOp.REGISTER_SCHEMA) {
-                // For REGISTER_SCHEMA the 'key' param carries the database name string
                 dbName = (key != null && !key.isEmpty()) ? key : "";
                 String t = extractTableName(payload);
                 tableName = (t == null || t.isEmpty()) ? "_" : t;
@@ -94,7 +77,6 @@ public class HttpConnection implements Connection {
                 .header("X-Bonsai-Flags", String.valueOf(flags & 0xFF))
                 .method("POST", bodyPublisher);
 
-        // Send key via header to avoid URL-encoding issues with special characters
         boolean hasKey = key != null && !key.isEmpty()
                 && op != RequestOp.MGET
                 && !op.getSymbol().startsWith("QUERY_")
@@ -116,7 +98,6 @@ public class HttpConnection implements Connection {
                         throw new RuntimeException("Bonsai HTTP Error (" + status + "): " + msg);
                     }
 
-                    // Cache the ID→name mapping returned by REGISTER_SCHEMA
                     if (op == RequestOp.REGISTER_SCHEMA && respBody != null && respBody.length >= 3) {
                         ByteBuffer buf = ByteBuffer.wrap(respBody);
                         short respDbId = (short) (buf.get() & 0xFF);
@@ -152,6 +133,5 @@ public class HttpConnection implements Connection {
 
     @Override
     public void stop() {
-        // HttpClient manages its own connection pool; nothing to do
     }
 }

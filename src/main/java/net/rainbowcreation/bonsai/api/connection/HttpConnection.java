@@ -5,10 +5,13 @@ import net.rainbowcreation.bonsai.api.config.Config;
 import net.rainbowcreation.bonsai.util.ThreadUtil;
 
 import java.io.*;
+
 import java.net.HttpURLConnection;
 import java.net.URL;
+
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -31,9 +34,8 @@ public class HttpConnection implements Connection {
     private final ExecutorService executor;
     private final String bearerToken;
 
-    // Reverse-map: numeric IDs → string names, populated after REGISTER_SCHEMA responses
     private final Map<Short, String> dbNames = new ConcurrentHashMap<>();
-    private final Map<Long, String> tableNames = new ConcurrentHashMap<>(); // key = packIds(dbId, tableId)
+    private final Map<Long, String> tableNames = new ConcurrentHashMap<>();
 
     public HttpConnection(String host, int port) {
         this.baseUrl = "http://" + host + ":" + port + "/v1/data";
@@ -50,15 +52,12 @@ public class HttpConnection implements Connection {
 
     private byte[] doSend(RequestOp op, short dbId, short tableId, String key, byte[] payload, byte flags) {
         try {
-            // SUBSCRIBE has no HTTP equivalent — the Edge cannot push to HTTP clients
             if (op == RequestOp.SUBSCRIBE) {
                 return new byte[0];
             }
 
-            // Resolve string names from registry
             final String dbName, tableName;
             if (op == RequestOp.REGISTER_SCHEMA) {
-                // For REGISTER_SCHEMA the 'key' param carries the database name string
                 dbName = (key != null && !key.isEmpty()) ? key : "";
                 String t = extractTableName(payload);
                 tableName = (t == null || t.isEmpty()) ? "_" : t;
@@ -74,7 +73,6 @@ public class HttpConnection implements Connection {
                 tableName = t;
             }
 
-            // URL: /v1/data/{db}/{table}  — key is sent via X-Bonsai-Key header
             String urlStr = baseUrl + "/" + dbName + "/" + tableName;
 
             HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
@@ -86,7 +84,6 @@ public class HttpConnection implements Connection {
             conn.setRequestProperty("X-Bonsai-Op", op.getSymbol());
             conn.setRequestProperty("X-Bonsai-Flags", String.valueOf(flags & 0xFF));
 
-            // Send key via header to avoid URL-encoding issues with special characters
             boolean hasKey = key != null && !key.isEmpty()
                 && op != RequestOp.MGET
                 && !op.getSymbol().startsWith("QUERY_")
@@ -105,8 +102,6 @@ public class HttpConnection implements Connection {
                     os.write(payload);
                 }
             } else {
-                // No body — still use doOutput=true with Content-Length:0 so the
-                // HTTP library sends a well-formed POST without blocking on streaming mode.
                 conn.setDoOutput(true);
                 conn.setFixedLengthStreamingMode(0);
             }
@@ -121,7 +116,6 @@ public class HttpConnection implements Connection {
                 throw new RuntimeException("Bonsai HTTP Error (" + status + "): " + msg);
             }
 
-            // Cache the ID→name mapping returned by REGISTER_SCHEMA
             if (op == RequestOp.REGISTER_SCHEMA && body != null && body.length >= 3) {
                 ByteBuffer buf = ByteBuffer.wrap(body);
                 short respDbId = (short) (buf.get() & 0xFF);
