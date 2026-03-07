@@ -227,22 +227,30 @@ public class TcpConnection implements Connection {
             synchronized (writeLock) {
                 if (!running || out == null) throw new IOException("Not connected");
 
-                
+                if (totalSize > writeBuffer.length) {
+                    throw new IOException("Request too large: " + totalSize + " bytes (max " + writeBuffer.length + ")");
+                }
+
                 if (writePosition + totalSize > writeBuffer.length) {
                     doFlush();
                 }
 
-                
-                writeBuffer[writePosition++] = (byte) (dataLen >>> 24);
-                writeBuffer[writePosition++] = (byte) (dataLen >>> 16);
-                writeBuffer[writePosition++] = (byte) (dataLen >>> 8);
-                writeBuffer[writePosition++] = (byte) dataLen;
+                int savedPosition = writePosition;
+                try {
+                    writeBuffer[writePosition++] = (byte) (dataLen >>> 24);
+                    writeBuffer[writePosition++] = (byte) (dataLen >>> 16);
+                    writeBuffer[writePosition++] = (byte) (dataLen >>> 8);
+                    writeBuffer[writePosition++] = (byte) dataLen;
 
-                int written = req.writeTo(writeBuffer, writePosition);
-                writePosition += written;
-                pendingBytes.addAndGet(totalSize);
+                    int written = req.writeTo(writeBuffer, writePosition);
+                    writePosition += written;
+                    pendingBytes.addAndGet(totalSize);
 
-                doFlush();
+                    doFlush();
+                } catch (Exception e) {
+                    writePosition = savedPosition;
+                    throw e;
+                }
             }
         } catch (Exception e) {
             pendingRequests.remove(reqId);
