@@ -3,6 +3,7 @@ package net.rainbowcreation.bonsai.api.impl;
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.BonsaiFuture;
 import net.rainbowcreation.bonsai.BonsaiTable;
+import net.rainbowcreation.bonsai.WriteMode;
 import net.rainbowcreation.bonsai.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.config.Config;
 import net.rainbowcreation.bonsai.api.connection.Connection;
@@ -370,6 +371,33 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     }
 
     @Override
+    public BonsaiFuture<Void> setAsync(String key, T value, WriteMode mode) {
+        if (type != Object.class && value != null && !type.isInstance(value)) {
+            CompletableFuture<Void> failed = new CompletableFuture<>();
+            failed.completeExceptionally(new ClassCastException(
+                "Type mismatch: table '" + table + "' expects " + type.getSimpleName() +
+                ", but got " + value.getClass().getSimpleName() +
+                ". Use .use(\"" + table + "\", Object.class) to allow mixed types."
+            ));
+            return new BonsaiFuture<>(failed);
+        }
+
+        put(key, value);
+
+        byte[] payload = encodeValue(value);
+        byte flags = mode.getFlags();
+
+        CompletableFuture<byte[]> io = conn.send(RequestOp.SET, dbId, tableId, key, payload, flags);
+        return new BonsaiFuture<>(io.handleAsync((r, e) -> {
+            if (e != null) {
+                invalidate(key);
+                throw new RuntimeException(e);
+            }
+            return null;
+        }, BonsApi.WORKER_POOL));
+    }
+
+    @Override
     public BonsaiFuture<Void> setAsync(String key, T value, long ttl, TimeUnit unit) {
         if (type != Object.class && value != null && !type.isInstance(value)) {
             CompletableFuture<Void> failed = new CompletableFuture<>();
@@ -615,6 +643,21 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             
             return FORY.deserialize(bytes);
         }
+    }
+
+    private byte[] encodeValue(Object value) {
+        if (value instanceof String || value instanceof Integer || value instanceof Long || value instanceof Boolean) {
+            return encodePrimitive(value);
+        }
+        if (type == Object.class) {
+            return serializeWithTypeInfo(value);
+        }
+        Object toSend = convertToSerializable(value);
+        byte[] data = encodePrimitive(toSend);
+        if (data == null) {
+            data = FORY.serialize(toSend);
+        }
+        return data;
     }
 
     private T getIfPresent(String key) {
