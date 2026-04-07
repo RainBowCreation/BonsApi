@@ -6,8 +6,8 @@ import net.rainbowcreation.bonsai.WriteMode;
 import net.rainbowcreation.bonsai.annotation.BonsaiConsistent;
 import net.rainbowcreation.bonsai.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.annotation.BonsaiQuery;
-import net.rainbowcreation.bonsai.annotation.BonsaiSafe;
 import net.rainbowcreation.bonsai.annotation.BonsaiUnsafe;
+import net.rainbowcreation.bonsai.annotation.BonsaiVolatile;
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.api.config.Config;
 import net.rainbowcreation.bonsai.api.connection.Connection;
@@ -47,10 +47,11 @@ public class RemoteRoot implements BonsaiRoot {
     @Override
     public <T> BonsaiTable<T> use(Class<T> type) {
         WriteMode mode = resolveWriteMode(type);
+        boolean vol = type.isAnnotationPresent(BonsaiVolatile.class);
         short tableId = scanAndRegisterSchema(type);
         short dbId = getOrRegisterDatabaseId();
 
-        RemoteTable<T> table = new RemoteTable<>(connection, dbId, tableId, db, type.getSimpleName(), type, mode);
+        RemoteTable<T> table = new RemoteTable<>(connection, dbId, tableId, db, type.getSimpleName(), type, mode, vol);
         if (Config.CACHE_ENABLED) {
             return createCachedTable(table, type.getSimpleName());
         }

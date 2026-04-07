@@ -4,15 +4,20 @@ import net.rainbowcreation.bonsai.BonsaiTable;
 import net.rainbowcreation.bonsai.WriteMode;
 import net.rainbowcreation.bonsai.annotation.BonsaiConsistent;
 import net.rainbowcreation.bonsai.annotation.BonsaiSafe;
+import net.rainbowcreation.bonsai.annotation.BonsaiTtl;
 import net.rainbowcreation.bonsai.annotation.BonsaiUnsafe;
+import net.rainbowcreation.bonsai.annotation.BonsaiVolatile;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 public abstract class BonsaiEntity<T extends BonsaiEntity<T>> {
     protected transient BonsaiTable<T> _table;
     protected transient String _key;
 
     private static final ConcurrentHashMap<Class<?>, WriteMode> MODE_CACHE = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Class<?>, long[]> TTL_CACHE = new ConcurrentHashMap<>();
+    private static final long[] NO_TTL = null;
 
     @SuppressWarnings("unchecked")
     public T attach(BonsaiTable<T> table, String key) {
@@ -22,21 +27,33 @@ public abstract class BonsaiEntity<T extends BonsaiEntity<T>> {
     }
 
     /**
-     * Saves this entity using the write mode determined by the class annotation:
+     * Saves this entity using the write mode and TTL determined by class annotations.
+     *
+     * <p>Write mode priority:
      * <ul>
-     *   <li>{@link BonsaiUnsafe @BonsaiUnsafe} → fire-and-forget (fastest)</li>
+     *   <li>{@link BonsaiVolatile @BonsaiVolatile} → no WAL, no MySQL, edge-cached only (fastest)</li>
+     *   <li>{@link BonsaiUnsafe @BonsaiUnsafe} → async WAL, fire-and-forget</li>
      *   <li>{@link BonsaiSafe @BonsaiSafe} or no annotation → wait for WAL durability (default)</li>
      *   <li>{@link BonsaiConsistent @BonsaiConsistent} → wait for WAL + all edge ACKs (strongest)</li>
      * </ul>
+     *
+     * <p>If {@link BonsaiTtl @BonsaiTtl} is present, the entry auto-expires after the
+     * specified duration.
      */
     @SuppressWarnings("unchecked")
     public void save() {
         requireAttached("save");
-        WriteMode mode = resolveWriteMode();
-        if (mode == WriteMode.UNSAFE) {
-            _table.setAsync(_key, (T) this, mode);
+        long[] ttl = resolveTtl();
+        if (ttl.length > 0) {
+            // TTL path — uses table's default writeMode (set via annotation on root.use())
+            _table.set(_key, (T) this, ttl[0], TimeUnit.MILLISECONDS);
         } else {
-            _table.set(_key, (T) this, mode);
+            WriteMode mode = resolveWriteMode();
+            if (mode == WriteMode.UNSAFE) {
+                _table.setAsync(_key, (T) this, mode);
+            } else {
+                _table.set(_key, (T) this, mode);
+            }
         }
     }
 
@@ -85,6 +102,14 @@ public abstract class BonsaiEntity<T extends BonsaiEntity<T>> {
             if (cls.isAnnotationPresent(BonsaiConsistent.class)) return WriteMode.CONSISTENT;
             if (cls.isAnnotationPresent(BonsaiUnsafe.class))     return WriteMode.UNSAFE;
             return WriteMode.SAFE;
+        });
+    }
+
+    private long[] resolveTtl() {
+        return TTL_CACHE.computeIfAbsent(getClass(), cls -> {
+            BonsaiTtl ann = cls.getAnnotation(BonsaiTtl.class);
+            if (ann == null) return new long[0]; // sentinel for "no TTL"
+            return new long[]{ ann.unit().toMillis(ann.value()) };
         });
     }
 }
