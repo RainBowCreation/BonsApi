@@ -33,7 +33,11 @@ public abstract class BonsaiEntity<T extends BonsaiEntity<T>> {
     public void save() {
         requireAttached("save");
         WriteMode mode = resolveWriteMode();
-        _table.setAsync(_key, (T) this, mode);
+        if (mode == WriteMode.UNSAFE) {
+            _table.setAsync(_key, (T) this, mode);
+        } else {
+            _table.set(_key, (T) this, mode);
+        }
     }
 
     /** Saves with explicit unsafe mode, ignoring class annotation. */

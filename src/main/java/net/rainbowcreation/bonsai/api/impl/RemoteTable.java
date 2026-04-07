@@ -35,7 +35,7 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     private final String db, table;
     public final short dbId, tableId;
     private final Class<T> type;
-    private final boolean safe;
+    private final WriteMode writeMode;
 
     private static final ThreadSafeFory FORY = ForyFactory.get();
     private static final Map<Class<?>, List<Field>> fieldCache = new ConcurrentHashMap<>();
@@ -50,21 +50,25 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     private final Cache<String, T> cache;
 
     public RemoteTable(Connection conn, String db, String table, Class<T> type) {
-        this(conn, (short) 0, (short) 0, db, table, type, true);  // Default: safe mode, no IDs
+        this(conn, (short) 0, (short) 0, db, table, type, WriteMode.SAFE);
     }
 
     public RemoteTable(Connection conn, String db, String table, Class<T> type, boolean safe) {
-        this(conn, (short) 0, (short) 0, db, table, type, safe);
+        this(conn, (short) 0, (short) 0, db, table, type, safe ? WriteMode.SAFE : WriteMode.UNSAFE);
     }
 
     public RemoteTable(Connection conn, short dbId, short tableId, String db, String table, Class<T> type, boolean safe) {
+        this(conn, dbId, tableId, db, table, type, safe ? WriteMode.SAFE : WriteMode.UNSAFE);
+    }
+
+    public RemoteTable(Connection conn, short dbId, short tableId, String db, String table, Class<T> type, WriteMode writeMode) {
         this.conn = conn;
         this.dbId = dbId;
         this.tableId = tableId;
         this.db = db;
         this.table = table;
         this.type = type;
-        this.safe = safe;
+        this.writeMode = writeMode;
 
         if (Config.CACHE_ENABLED) {
             BonsApi.LOGGER.info("LocalCache enabled for table: " + table + " (ID: " + tableId + ")");
@@ -358,7 +362,7 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             }
         }
 
-        byte flags = (byte) (safe ? 0x01 : 0x00);  // Bit 0: safe mode
+        byte flags = writeMode.getFlags();
 
         CompletableFuture<byte[]> io = conn.send(RequestOp.SET, dbId, tableId, key, payload, flags);
         return new BonsaiFuture<>(io.handleAsync((r, e) -> {
@@ -432,7 +436,7 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
         ByteBuffer.wrap(payload).putLong(expiry);
         System.arraycopy(data, 0, payload, 8, data.length);
 
-        byte flags = (byte) ((safe ? 0x01 : 0x00) | 0x02);
+        byte flags = (byte) (writeMode.getFlags() | 0x02);
 
         CompletableFuture<byte[]> io = conn.send(RequestOp.SET, dbId, tableId, key, payload, flags);
         return new BonsaiFuture<>(io.handleAsync((r, e) -> {
@@ -448,7 +452,7 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     public BonsaiFuture<Void> deleteAsync(String key) {
         invalidate(key);
 
-        byte flags = (byte) (safe ? 0x01 : 0x00);  // Bit 0: safe mode
+        byte flags = writeMode.getFlags();
 
         CompletableFuture<byte[]> io = conn.send(RequestOp.DELETE, dbId, tableId, key, null, flags);
 

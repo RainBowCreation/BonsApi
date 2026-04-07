@@ -2,8 +2,12 @@ package net.rainbowcreation.bonsai.api.impl;
 
 import net.rainbowcreation.bonsai.BonsaiRoot;
 import net.rainbowcreation.bonsai.BonsaiTable;
+import net.rainbowcreation.bonsai.WriteMode;
+import net.rainbowcreation.bonsai.annotation.BonsaiConsistent;
 import net.rainbowcreation.bonsai.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.annotation.BonsaiQuery;
+import net.rainbowcreation.bonsai.annotation.BonsaiSafe;
+import net.rainbowcreation.bonsai.annotation.BonsaiUnsafe;
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.api.config.Config;
 import net.rainbowcreation.bonsai.api.connection.Connection;
@@ -42,7 +46,15 @@ public class RemoteRoot implements BonsaiRoot {
 
     @Override
     public <T> BonsaiTable<T> use(Class<T> type) {
-        return use(type, true);  // Default: safe mode
+        WriteMode mode = resolveWriteMode(type);
+        short tableId = scanAndRegisterSchema(type);
+        short dbId = getOrRegisterDatabaseId();
+
+        RemoteTable<T> table = new RemoteTable<>(connection, dbId, tableId, db, type.getSimpleName(), type, mode);
+        if (Config.CACHE_ENABLED) {
+            return createCachedTable(table, type.getSimpleName());
+        }
+        return table;
     }
 
     @Override
@@ -303,6 +315,16 @@ public class RemoteRoot implements BonsaiRoot {
         }
 
         return remoteTable;
+    }
+
+    private static final ConcurrentHashMap<Class<?>, WriteMode> WRITE_MODE_CACHE = new ConcurrentHashMap<>();
+
+    private static WriteMode resolveWriteMode(Class<?> type) {
+        return WRITE_MODE_CACHE.computeIfAbsent(type, cls -> {
+            if (cls.isAnnotationPresent(BonsaiConsistent.class)) return WriteMode.CONSISTENT;
+            if (cls.isAnnotationPresent(BonsaiUnsafe.class))     return WriteMode.UNSAFE;
+            return WriteMode.SAFE;
+        });
     }
 
     private void handleInvalidation(String dbName, String tableName, String key) {
