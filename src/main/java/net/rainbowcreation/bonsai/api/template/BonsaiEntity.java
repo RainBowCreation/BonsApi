@@ -7,17 +7,13 @@ import net.rainbowcreation.bonsai.annotation.BonsaiSafe;
 import net.rainbowcreation.bonsai.annotation.BonsaiTtl;
 import net.rainbowcreation.bonsai.annotation.BonsaiUnsafe;
 import net.rainbowcreation.bonsai.annotation.BonsaiVolatile;
+import net.rainbowcreation.bonsai.annotation.EntityMetadata;
 
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 public abstract class BonsaiEntity<T extends BonsaiEntity<T>> {
     protected transient BonsaiTable<T> _table;
     protected transient String _key;
-
-    private static final ConcurrentHashMap<Class<?>, WriteMode> MODE_CACHE = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Class<?>, long[]> TTL_CACHE = new ConcurrentHashMap<>();
-    private static final long[] NO_TTL = null;
 
     @SuppressWarnings("unchecked")
     public T attach(BonsaiTable<T> table, String key) {
@@ -27,32 +23,39 @@ public abstract class BonsaiEntity<T extends BonsaiEntity<T>> {
     }
 
     /**
-     * Saves this entity using the write mode and TTL determined by class annotations.
+     * Saves this entity using the write mode and TTL determined by annotations on the
+     * class and/or its fields. Field-level annotations override class-level. Across
+     * multiple fields, strictest write mode wins and shortest TTL wins.
      *
      * <p>Write mode priority:
      * <ul>
-     *   <li>{@link BonsaiVolatile @BonsaiVolatile} → no WAL, no MySQL, edge-cached only (fastest)</li>
+     *   <li>{@link BonsaiVolatile @BonsaiVolatile} (alone) → local cache only, never hits network</li>
      *   <li>{@link BonsaiUnsafe @BonsaiUnsafe} → async WAL, fire-and-forget</li>
      *   <li>{@link BonsaiSafe @BonsaiSafe} or no annotation → wait for WAL durability (default)</li>
      *   <li>{@link BonsaiConsistent @BonsaiConsistent} → wait for WAL + all edge ACKs (strongest)</li>
      * </ul>
      *
-     * <p>If {@link BonsaiTtl @BonsaiTtl} is present, the entry auto-expires after the
-     * specified duration.
+     * <p>All annotation metadata is baked into a single {@link EntityMetadata} object
+     * cached via {@link ClassValue} — one lookup per save, no reflection on the hot path.
      */
     @SuppressWarnings("unchecked")
     public void save() {
         requireAttached("save");
-        long[] ttl = resolveTtl();
-        if (ttl.length > 0) {
-            // TTL path — uses table's default writeMode (set via annotation on root.use())
-            _table.set(_key, (T) this, ttl[0], TimeUnit.MILLISECONDS);
+        EntityMetadata meta = EntityMetadata.of(getClass());
+
+        // Volatile-only (no explicit write mode) → local cache, fire-and-forget
+        if (meta.localOnly) {
+            _table.setAsync(_key, (T) this);
+            return;
+        }
+        if (meta.ttlMs >= 0) {
+            // TTL path — uses table's default writeMode
+            _table.set(_key, (T) this, meta.ttlMs, TimeUnit.MILLISECONDS);
         } else {
-            WriteMode mode = resolveWriteMode();
-            if (mode == WriteMode.UNSAFE) {
-                _table.setAsync(_key, (T) this, mode);
+            if (meta.writeMode == WriteMode.UNSAFE) {
+                _table.setAsync(_key, (T) this, meta.writeMode);
             } else {
-                _table.set(_key, (T) this, mode);
+                _table.set(_key, (T) this, meta.writeMode);
             }
         }
     }
@@ -95,21 +98,5 @@ public abstract class BonsaiEntity<T extends BonsaiEntity<T>> {
         if (_table == null || _key == null) {
             throw new IllegalStateException("Cannot " + method + ": Entity not attached to a BonsaiTable. Call attach() first.");
         }
-    }
-
-    private WriteMode resolveWriteMode() {
-        return MODE_CACHE.computeIfAbsent(getClass(), cls -> {
-            if (cls.isAnnotationPresent(BonsaiConsistent.class)) return WriteMode.CONSISTENT;
-            if (cls.isAnnotationPresent(BonsaiUnsafe.class))     return WriteMode.UNSAFE;
-            return WriteMode.SAFE;
-        });
-    }
-
-    private long[] resolveTtl() {
-        return TTL_CACHE.computeIfAbsent(getClass(), cls -> {
-            BonsaiTtl ann = cls.getAnnotation(BonsaiTtl.class);
-            if (ann == null) return new long[0]; // sentinel for "no TTL"
-            return new long[]{ ann.unit().toMillis(ann.value()) };
-        });
     }
 }
