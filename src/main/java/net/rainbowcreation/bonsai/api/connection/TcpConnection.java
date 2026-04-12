@@ -34,11 +34,6 @@ public class TcpConnection implements Connection {
     private byte[] writeBuffer = new byte[Config.WRITE_FLUSH_THRESHOLD];
     private int writePosition = 0;
     private final Object writeLock = new Object();
-    private final ScheduledExecutorService flusher;
-    private final AtomicInteger pendingBytes = new AtomicInteger(0);
-    private final AtomicInteger bufferedRequestCount = new AtomicInteger(0);
-
-    private final byte[] flushBuffer = new byte[Config.WRITE_FLUSH_THRESHOLD];
 
     private volatile boolean running = false;
     private volatile InvalidationCallback invalidationCallback;
@@ -48,9 +43,6 @@ public class TcpConnection implements Connection {
         this.host = host;
         this.port = port;
         this.idGen = idGen;
-        this.flusher = Executors.newSingleThreadScheduledExecutor(
-            ThreadUtil.createThreadFactory("Bonsai-Flusher", true)
-        );
         connect();
     }
 
@@ -140,42 +132,11 @@ public class TcpConnection implements Connection {
         }
     }
 
-    private void flushBuffer() {
-        if (pendingBytes.get() > 0) {
-            try {
-                doFlushFast();
-            } catch (IOException e) {
-                BonsApi.LOGGER.severe("Flush error: " + e.getMessage());
-            }
-        }
-    }
-
-    private void doFlushFast() throws IOException {
-        if (out == null) return;
-
-        int bytesToWrite;
-        synchronized (writeLock) {
-            if (writePosition == 0) return;
-
-            System.arraycopy(writeBuffer, 0, flushBuffer, 0, writePosition);
-            bytesToWrite = writePosition;
-
-            writePosition = 0;
-            pendingBytes.set(0);
-            bufferedRequestCount.set(0);
-        }
-
-        out.write(flushBuffer, 0, bytesToWrite);
-        out.flush();
-    }
-
     private void doFlush() throws IOException {
         if (writePosition > 0 && out != null) {
             out.write(writeBuffer, 0, writePosition);
             out.flush();
             writePosition = 0;
-            pendingBytes.set(0);
-            bufferedRequestCount.set(0);
         }
     }
 
@@ -244,7 +205,6 @@ public class TcpConnection implements Connection {
 
                     int written = req.writeTo(writeBuffer, writePosition);
                     writePosition += written;
-                    pendingBytes.addAndGet(totalSize);
 
                     doFlush();
                 } catch (Exception e) {
@@ -265,7 +225,6 @@ public class TcpConnection implements Connection {
     @Override
     public void stop() {
         running = false;
-        flusher.shutdown();
         synchronized (writeLock) {
             try {
                 doFlush();
