@@ -242,6 +242,27 @@ public class TcpConnection implements Connection {
         this.invalidationCallback = callback;
     }
 
+    @Override
+    public boolean supportsInvalidation() {
+        return true;
+    }
+
+    @Override
+    public void authenticateDb(String dbName, String secret) {
+        if (secret == null || secret.isEmpty()) return;
+        byte[] nonce = this.sessionNonce;
+        if (nonce == null) {
+            throw new RuntimeException("authenticateDb: no session nonce — connection not ready");
+        }
+        byte[] hmac = BonsaiAuth.computeHmac(secret, nonce, dbName);
+        try {
+            send(RequestOp.AUTH_DB, (short) 0, (short) 0, dbName, hmac, (byte) 0)
+                .get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new RuntimeException("AUTH_DB failed for db '" + dbName + "': " + e.getMessage(), e);
+        }
+    }
+
     public byte[] getNonce() {
         return sessionNonce;
     }

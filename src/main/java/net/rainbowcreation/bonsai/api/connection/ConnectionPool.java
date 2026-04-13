@@ -66,6 +66,18 @@ public class ConnectionPool implements Connection, Stoppable {
     }
 
     @Override
+    public boolean supportsInvalidation() {
+        return true;
+    }
+
+    @Override
+    public void authenticateDb(String dbName, String secret) {
+        for (TcpConnection conn : connections) {
+            conn.authenticateDb(dbName, secret);
+        }
+    }
+
+    @Override
     public void stop() {
         for (TcpConnection conn : connections) {
             conn.stop();

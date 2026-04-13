@@ -86,7 +86,10 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
         this.volatileMode = volatileMode;
         this.localOnly = localOnly;
 
-        if (localOnly || Config.CACHE_ENABLED) {
+        // Non-local caches require server-pushed invalidations to stay fresh.
+        // If the transport can't deliver them (e.g. HTTP), silently honoring
+        // Config.CACHE_ENABLED would serve stale reads forever.
+        if (localOnly || (Config.CACHE_ENABLED && conn.supportsInvalidation())) {
             Caffeine<Object, Object> builder = Caffeine.newBuilder()
                     .maximumSize(Config.CACHE_MAX_SIZE);
 
