@@ -75,8 +75,26 @@ public class HttpConnection implements Connection {
 
             String urlStr = baseUrl + "/" + dbName + "/" + tableName;
 
+            boolean hasBody = payload != null && payload.length > 0;
+            boolean hasKey = key != null && !key.isEmpty()
+                && op != RequestOp.MGET
+                && !op.getSymbol().startsWith("QUERY_")
+                && op != RequestOp.REGISTER_SCHEMA;
+
+            // Use proper HTTP method for CRUD ops; fall back to POST for complex ops.
+            // X-Bonsai-Op is still sent for backward compat with older servers.
+            String method;
+            switch (op) {
+                case GET:
+                case EXISTS:
+                case STATUS:    method = "GET";    break;
+                case SET:       method = "PUT";    break;
+                case DELETE:    method = "DELETE"; break;
+                default:        method = "POST";   break;
+            }
+
             HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-            conn.setRequestMethod("POST");
+            conn.setRequestMethod(method);
             conn.setDoInput(true);
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(30000);
@@ -84,10 +102,6 @@ public class HttpConnection implements Connection {
             conn.setRequestProperty("X-Bonsai-Op", op.getSymbol());
             conn.setRequestProperty("X-Bonsai-Flags", String.valueOf(flags & 0xFF));
 
-            boolean hasKey = key != null && !key.isEmpty()
-                && op != RequestOp.MGET
-                && !op.getSymbol().startsWith("QUERY_")
-                && op != RequestOp.REGISTER_SCHEMA;
             if (hasKey) {
                 conn.setRequestProperty("X-Bonsai-Key", key);
             }
@@ -95,13 +109,13 @@ public class HttpConnection implements Connection {
                 conn.setRequestProperty("Authorization", "Bearer " + bearerToken);
             }
 
-            if (payload != null && payload.length > 0) {
+            if (hasBody) {
                 conn.setDoOutput(true);
                 conn.setFixedLengthStreamingMode(payload.length);
                 try (OutputStream os = conn.getOutputStream()) {
                     os.write(payload);
                 }
-            } else {
+            } else if ("PUT".equals(method) || "POST".equals(method)) {
                 conn.setDoOutput(true);
                 conn.setFixedLengthStreamingMode(0);
             }

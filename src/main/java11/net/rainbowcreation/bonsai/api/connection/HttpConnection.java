@@ -65,9 +65,22 @@ public class HttpConnection implements Connection {
         // URL: /v1/data/{db}/{table}  — key is sent via X-Bonsai-Key header
         String urlStr = baseUrl + "/" + dbName + "/" + tableName;
 
-        HttpRequest.BodyPublisher bodyPublisher = (payload != null && payload.length > 0)
+        boolean hasBody = payload != null && payload.length > 0;
+        HttpRequest.BodyPublisher bodyPublisher = hasBody
                 ? HttpRequest.BodyPublishers.ofByteArray(payload)
                 : HttpRequest.BodyPublishers.noBody();
+
+        // Use proper HTTP method for CRUD ops; POST for complex ops.
+        // X-Bonsai-Op is still sent for backward compat with older servers.
+        final String method;
+        switch (op) {
+            case GET:
+            case EXISTS:
+            case STATUS:    method = "GET";    break;
+            case SET:       method = "PUT";    break;
+            case DELETE:    method = "DELETE"; break;
+            default:        method = "POST";   break;
+        }
 
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(urlStr))
@@ -75,7 +88,7 @@ public class HttpConnection implements Connection {
                 .header("Content-Type", "application/octet-stream")
                 .header("X-Bonsai-Op", op.getSymbol())
                 .header("X-Bonsai-Flags", String.valueOf(flags & 0xFF))
-                .method("POST", bodyPublisher);
+                .method(method, bodyPublisher);
 
         boolean hasKey = key != null && !key.isEmpty()
                 && op != RequestOp.MGET

@@ -42,6 +42,12 @@ public class RemoteRoot implements BonsaiRoot {
         this.connection = connection;
         this.db = db;
         this.secret = secret;
+        if (Config.CACHE_ENABLED && !connection.supportsInvalidation()) {
+            BonsApi.LOGGER.warning(
+                "bonsai.cache.enabled=true but transport " + connection.getClass().getSimpleName() +
+                " does not support server-pushed invalidations — client-side cache will stay DISABLED " +
+                "for db '" + db + "' to prevent stale reads. Use TcpConnection for client caching.");
+        }
     }
 
     /**
