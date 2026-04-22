@@ -3,6 +3,7 @@ package net.rainbowcreation.bonsai.api.impl;
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.BonsaiFuture;
 import net.rainbowcreation.bonsai.BonsaiTable;
+import net.rainbowcreation.bonsai.WriteMode;
 import net.rainbowcreation.bonsai.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.api.config.Config;
 import net.rainbowcreation.bonsai.api.connection.Connection;
@@ -32,9 +33,11 @@ import java.util.concurrent.TimeUnit;
 public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     private final Connection conn;
     private final String db, table;
-    public final short dbId, tableId;  // Compact IDs for wire protocol
+    public final short dbId, tableId;
     private final Class<T> type;
-    private final boolean safe;  // If true, wait for WAL and broadcast. If false, fire-and-forget.
+    private final WriteMode writeMode;
+    private final boolean volatileMode;
+    private final boolean localOnly;
 
     private static final ThreadSafeFory FORY = ForyFactory.get();
     private static final Map<Class<?>, List<Field>> fieldCache = new ConcurrentHashMap<>();
@@ -49,27 +52,57 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     private final Cache<String, T> cache;
 
     public RemoteTable(Connection conn, String db, String table, Class<T> type) {
-        this(conn, (short) 0, (short) 0, db, table, type, true);  // Default: safe mode, no IDs
+        this(conn, (short) 0, (short) 0, db, table, type, WriteMode.SAFE, false, false);
     }
 
     public RemoteTable(Connection conn, String db, String table, Class<T> type, boolean safe) {
-        this(conn, (short) 0, (short) 0, db, table, type, safe);
+        this(conn, (short) 0, (short) 0, db, table, type, safe ? WriteMode.SAFE : WriteMode.UNSAFE, false, false);
     }
 
     public RemoteTable(Connection conn, short dbId, short tableId, String db, String table, Class<T> type, boolean safe) {
+        this(conn, dbId, tableId, db, table, type, safe ? WriteMode.SAFE : WriteMode.UNSAFE, false, false);
+    }
+
+    public RemoteTable(Connection conn, short dbId, short tableId, String db, String table, Class<T> type, WriteMode writeMode) {
+        this(conn, dbId, tableId, db, table, type, writeMode, false, false);
+    }
+
+    public RemoteTable(Connection conn, short dbId, short tableId, String db, String table, Class<T> type, WriteMode writeMode, boolean volatileMode) {
+        this(conn, dbId, tableId, db, table, type, writeMode, volatileMode, false);
+    }
+
+    public RemoteTable(Connection conn, short dbId, short tableId, String db, String table, Class<T> type, WriteMode writeMode, boolean volatileMode, boolean localOnly) {
+        this(conn, dbId, tableId, db, table, type, writeMode, volatileMode, localOnly, -1);
+    }
+
+    public RemoteTable(Connection conn, short dbId, short tableId, String db, String table, Class<T> type, WriteMode writeMode, boolean volatileMode, boolean localOnly, long localTtlMs) {
         this.conn = conn;
         this.dbId = dbId;
         this.tableId = tableId;
         this.db = db;
         this.table = table;
         this.type = type;
-        this.safe = safe;
+        this.writeMode = writeMode;
+        this.volatileMode = volatileMode;
+        this.localOnly = localOnly;
 
-        if (Config.CACHE_ENABLED) {
-            BonsApi.LOGGER.info("LocalCache enabled for table: " + table + " (ID: " + tableId + ")");
+        // Non-local caches require server-pushed invalidations to stay fresh.
+        // If the transport can't deliver them (e.g. HTTP), silently honoring
+        // Config.CACHE_ENABLED would serve stale reads forever.
+        if (localOnly || (Config.CACHE_ENABLED && conn.supportsInvalidation())) {
             Caffeine<Object, Object> builder = Caffeine.newBuilder()
-                    .maximumSize(Config.CACHE_MAX_SIZE)
-                    .expireAfterWrite(Config.CACHE_TTL_SECONDS, TimeUnit.SECONDS);
+                    .maximumSize(Config.CACHE_MAX_SIZE);
+
+            if (localOnly && localTtlMs > 0) {
+                builder.expireAfterWrite(localTtlMs, TimeUnit.MILLISECONDS);
+                BonsApi.LOGGER.info("Volatile local-only cache for table: " + table + " (TTL: " + localTtlMs + "ms)");
+            } else if (localOnly) {
+                builder.expireAfterWrite(Config.CACHE_TTL_SECONDS, TimeUnit.SECONDS);
+                BonsApi.LOGGER.info("Volatile local-only cache for table: " + table);
+            } else {
+                builder.expireAfterWrite(Config.CACHE_TTL_SECONDS, TimeUnit.SECONDS);
+                BonsApi.LOGGER.info("LocalCache enabled for table: " + table + " (ID: " + tableId + ")");
+            }
 
             if (Config.CACHE_STATS_ENABLED) {
                 builder.recordStats();
@@ -80,6 +113,10 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
         else {
             this.cache = null;
         }
+    }
+
+    private byte baseFlags() {
+        return (byte) (writeMode.getFlags() | (volatileMode ? 0x10 : 0));
     }
 
     private static final ThreadLocal<ByteBuffer> ENCODE_BUFFER = ThreadLocal.withInitial(() -> ByteBuffer.allocate(8192));
@@ -140,7 +177,7 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             return new byte[] { MAGIC_BYTE, TYPE_BOOLEAN, (byte) ((Boolean) obj ? 0x01 : 0x00) };
         }
 
-        return null; // Not a supported primitive type
+        return null;
     }
 
     private Object decodePrimitive(byte[] bytes) {
@@ -200,7 +237,11 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             return BonsaiFuture.completed(cached);
         }
 
-        
+        if (localOnly) {
+            return BonsaiFuture.completed(null);
+        }
+
+
         CompletableFuture<byte[]> io = conn.send(RequestOp.GET, dbId, tableId, key, null, (byte) 0x01);
         CompletableFuture<T> safe = io.handleAsync((bytes, ex) -> {
             if (ex != null) throw new RuntimeException(ex);
@@ -244,7 +285,6 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             return BonsaiFuture.completed(Collections.emptyMap());
         }
 
-        // Check local cache for each key, collect misses
         Map<String, T> cachedResults = new HashMap<>();
         List<String> missingKeys = new ArrayList<>();
         for (String k : keys) {
@@ -256,8 +296,7 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             }
         }
 
-        // All cached
-        if (missingKeys.isEmpty()) {
+        if (missingKeys.isEmpty() || localOnly) {
             return BonsaiFuture.completed(cachedResults);
         }
 
@@ -341,16 +380,20 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
 
         put(key, value);
 
+        if (localOnly) {
+            return BonsaiFuture.completed(null);
+        }
+
         byte[] payload;
 
         if (value instanceof String || value instanceof Integer || value instanceof Long || value instanceof Boolean) {
             payload = encodePrimitive(value);
         } else {
-            
+
             if (type == Object.class) {
                 payload = serializeWithTypeInfo(value);
             } else {
-                
+
                 Object toSend = convertToSerializable(value);
                 payload = encodePrimitive(toSend);
                 if (payload == null) {
@@ -359,7 +402,38 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
             }
         }
 
-        byte flags = (byte) (safe ? 0x01 : 0x00);  // Bit 0: safe mode
+        byte flags = baseFlags();
+
+        CompletableFuture<byte[]> io = conn.send(RequestOp.SET, dbId, tableId, key, payload, flags);
+        return new BonsaiFuture<>(io.handleAsync((r, e) -> {
+            if (e != null) {
+                invalidate(key);
+                throw new RuntimeException(e);
+            }
+            return null;
+        }, BonsApi.WORKER_POOL));
+    }
+
+    @Override
+    public BonsaiFuture<Void> setAsync(String key, T value, WriteMode mode) {
+        if (type != Object.class && value != null && !type.isInstance(value)) {
+            CompletableFuture<Void> failed = new CompletableFuture<>();
+            failed.completeExceptionally(new ClassCastException(
+                "Type mismatch: table '" + table + "' expects " + type.getSimpleName() +
+                ", but got " + value.getClass().getSimpleName() +
+                ". Use .use(\"" + table + "\", Object.class) to allow mixed types."
+            ));
+            return new BonsaiFuture<>(failed);
+        }
+
+        put(key, value);
+
+        if (localOnly) {
+            return BonsaiFuture.completed(null);
+        }
+
+        byte[] payload = encodeValue(value);
+        byte flags = mode.getFlags();
 
         CompletableFuture<byte[]> io = conn.send(RequestOp.SET, dbId, tableId, key, payload, flags);
         return new BonsaiFuture<>(io.handleAsync((r, e) -> {
@@ -385,6 +459,10 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
 
         put(key, value);
 
+        if (localOnly) {
+            return BonsaiFuture.completed(null);
+        }
+
         byte[] data;
 
         if (value instanceof String || value instanceof Integer || value instanceof Long || value instanceof Boolean) {
@@ -406,7 +484,7 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
         ByteBuffer.wrap(payload).putLong(expiry);
         System.arraycopy(data, 0, payload, 8, data.length);
 
-        byte flags = (byte) ((safe ? 0x01 : 0x00) | 0x02);
+        byte flags = (byte) (baseFlags() | 0x02);
 
         CompletableFuture<byte[]> io = conn.send(RequestOp.SET, dbId, tableId, key, payload, flags);
         return new BonsaiFuture<>(io.handleAsync((r, e) -> {
@@ -422,7 +500,11 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     public BonsaiFuture<Void> deleteAsync(String key) {
         invalidate(key);
 
-        byte flags = (byte) (safe ? 0x01 : 0x00);  // Bit 0: safe mode
+        if (localOnly) {
+            return BonsaiFuture.completed(null);
+        }
+
+        byte flags = baseFlags();
 
         CompletableFuture<byte[]> io = conn.send(RequestOp.DELETE, dbId, tableId, key, null, flags);
 
@@ -434,7 +516,10 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
 
     @Override
     public BonsaiFuture<Boolean> existsAsync(String key) {
-        
+        if (localOnly) {
+            return BonsaiFuture.completed(getIfPresent(key) != null);
+        }
+
         CompletableFuture<byte[]> io = conn.send(RequestOp.EXISTS, dbId, tableId, key, null, (byte) 0x01);
         return new BonsaiFuture<>(io.thenApplyAsync(bytes -> bytes != null && bytes.length > 0 && bytes[0] == 1, BonsApi.WORKER_POOL));
     }
@@ -442,6 +527,16 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     @Override
     public Query<T> find() {
         return new RemoteQuery<>(conn, dbId, tableId, type);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public BonsaiFuture<Map<String, Object>> statusAsync() {
+        CompletableFuture<byte[]> io = conn.send(RequestOp.STATUS, dbId, tableId, "", null, (byte) 0x01);
+        return new BonsaiFuture<>(io.thenApplyAsync(bytes -> {
+            if (bytes == null || bytes.length == 0) return Collections.emptyMap();
+            return (Map<String, Object>) FORY.deserialize(bytes);
+        }, BonsApi.WORKER_POOL));
     }
 
     private List<Field> getCachedFields(Class<?> clazz) {
@@ -609,8 +704,23 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
         }
     }
 
+    private byte[] encodeValue(Object value) {
+        if (value instanceof String || value instanceof Integer || value instanceof Long || value instanceof Boolean) {
+            return encodePrimitive(value);
+        }
+        if (type == Object.class) {
+            return serializeWithTypeInfo(value);
+        }
+        Object toSend = convertToSerializable(value);
+        byte[] data = encodePrimitive(toSend);
+        if (data == null) {
+            data = FORY.serialize(toSend);
+        }
+        return data;
+    }
+
     private T getIfPresent(String key) {
-        if (Config.CACHE_ENABLED) {
+        if (cache != null) {
             if (key == null) return null;
             return cache.getIfPresent(key);
         }
@@ -618,24 +728,24 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     }
 
     private void put(String key, T val) {
-        if (Config.CACHE_ENABLED) {
+        if (cache != null) {
             if (val == null) return;
             cache.put(key, val);
         }
     }
 
     public void invalidate(String key) {
-        if (Config.CACHE_ENABLED) {
+        if (cache != null) {
             cache.invalidate(key);
         }
     }
 
     public void invalidateAll() {
-        if (Config.CACHE_ENABLED) cache.invalidateAll();
+        if (cache != null) cache.invalidateAll();
     }
 
     public void getStats() {
-        if (Config.CACHE_ENABLED && Config.CACHE_STATS_ENABLED) cache.stats();
+        if (cache != null && Config.CACHE_STATS_ENABLED) cache.stats();
     }
 
     public String getTableName() {
@@ -643,7 +753,11 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
     }
 
     public long getCacheSize() {
-        if (Config.CACHE_ENABLED) return cache.estimatedSize();
+        if (cache != null) return cache.estimatedSize();
         return -1;
+    }
+
+    public boolean isLocalOnly() {
+        return localOnly;
     }
 }

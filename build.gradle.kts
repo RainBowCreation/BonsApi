@@ -28,6 +28,11 @@ tasks.shadowJar {
         attributes("Multi-Release" to "true")
     }
 
+    into("META-INF/versions/11") { from(project.extensions.getByType(SourceSetContainer::class.java)["java11"].output) }
+    into("META-INF/versions/17") { from(project.extensions.getByType(SourceSetContainer::class.java)["java17"].output) }
+    into("META-INF/versions/21") { from(project.extensions.getByType(SourceSetContainer::class.java)["java21"].output) }
+    into("META-INF/versions/25") { from(project.extensions.getByType(SourceSetContainer::class.java)["java25"].output) }
+
     dependencies {
         exclude(dependency("org.apache.fory:.*:.*"))
         exclude(dependency("com.github.ben-manes.caffeine:.*:.*"))

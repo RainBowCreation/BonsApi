@@ -4,12 +4,15 @@ import net.rainbowcreation.bonsai.BonsaiRoot;
 import net.rainbowcreation.bonsai.BonsaiTable;
 import net.rainbowcreation.bonsai.annotation.BonsaiIgnore;
 import net.rainbowcreation.bonsai.annotation.BonsaiQuery;
+import net.rainbowcreation.bonsai.annotation.EntityMetadata;
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.api.config.Config;
 import net.rainbowcreation.bonsai.api.connection.Connection;
 import net.rainbowcreation.bonsai.connection.RequestOp;
 import net.rainbowcreation.bonsai.util.JsonUtil;
 import net.rainbowcreation.bonsai.registry.IdRegistry;
+
+import org.checkerframework.checker.nullness.qual.NonNull;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -25,31 +28,74 @@ import java.nio.charset.StandardCharsets;
 public class RemoteRoot implements BonsaiRoot {
     private final Connection connection;
     private final String db;
+    private final String secret;
 
     private final Map<String, RemoteTable<?>> cachedTables = new ConcurrentHashMap<>();
     private volatile boolean invalidationCallbackRegistered = false;
+    private volatile boolean authenticated = false;
 
-    
+
     private final IdRegistry idRegistry = new IdRegistry();
     private volatile Short cachedDbId = null;
 
     public RemoteRoot(Connection connection, String db, String secret) {
         this.connection = connection;
         this.db = db;
+        this.secret = secret;
+        if (Config.CACHE_ENABLED && !connection.supportsInvalidation()) {
+            BonsApi.LOGGER.warning(
+                "bonsai.cache.enabled=true but transport " + connection.getClass().getSimpleName() +
+                " does not support server-pushed invalidations — client-side cache will stay DISABLED " +
+                "for db '" + db + "' to prevent stale reads. Use TcpConnection for client caching.");
+        }
+    }
+
+    /**
+     * Send AUTH_DB exactly once per root, before the first schema request.
+     * No-op if no secret was supplied. Transports without a nonce handshake
+     * (e.g. HTTP) implement authenticateDb as a no-op.
+     */
+    private void ensureAuthenticated() {
+        if (authenticated || secret == null || secret.isEmpty()) return;
+        synchronized (this) {
+            if (authenticated) return;
+            connection.authenticateDb(db, secret);
+            authenticated = true;
+        }
     }
 
     @Override
     public <T> BonsaiTable<T> use(Class<T> type) {
-        return use(type, true);  // Default: safe mode
+        ensureAuthenticated();
+        EntityMetadata meta = EntityMetadata.of(type);
+
+        short tableId = scanAndRegisterSchema(type);
+        short dbId = getOrRegisterDatabaseId();
+
+        long localTtlMs = meta.localOnly ? meta.ttlMs : -1;
+
+        RemoteTable<T> table = new RemoteTable<>(connection, dbId, tableId, db, type.getSimpleName(), type, meta.writeMode, meta.volatileFlag, meta.localOnly, localTtlMs);
+        if (!meta.localOnly && cacheIsUsable()) {
+            return createCachedTable(table, type.getSimpleName());
+        }
+        return table;
     }
 
     @Override
     public <T> BonsaiTable<T> use(Class<T> type, boolean safe) {
+        ensureAuthenticated();
+        EntityMetadata meta = EntityMetadata.of(type);
+
         short tableId = scanAndRegisterSchema(type);
         short dbId = getOrRegisterDatabaseId();
 
-        RemoteTable<T> table = new RemoteTable<>(connection, dbId, tableId, db, type.getSimpleName(), type, safe);
-        if (Config.CACHE_ENABLED) {
+        // Caller's explicit `safe` wins over annotation-derived write mode;
+        // annotation-derived volatile / localOnly / ttl are still honored.
+        long localTtlMs = meta.localOnly ? meta.ttlMs : -1;
+        RemoteTable<T> table = new RemoteTable<>(connection, dbId, tableId, db, type.getSimpleName(), type,
+                safe ? net.rainbowcreation.bonsai.WriteMode.SAFE : net.rainbowcreation.bonsai.WriteMode.UNSAFE,
+                meta.volatileFlag, meta.localOnly, localTtlMs);
+        if (!meta.localOnly && cacheIsUsable()) {
             return createCachedTable(table, type.getSimpleName());
         }
         return table;
@@ -62,20 +108,24 @@ public class RemoteRoot implements BonsaiRoot {
 
     @Override
     public BonsaiTable<Object> use(String tableName, boolean safe) {
+        ensureAuthenticated();
         short dbId = getOrRegisterDatabaseId();
         short tableId = getOrRegisterTableId(tableName);
 
         RemoteTable<Object> table = new RemoteTable<>(connection, dbId, tableId, db, tableName, Object.class, safe);
-        if (Config.CACHE_ENABLED) {
+        if (cacheIsUsable()) {
             return createCachedTable(table, tableName);
         }
         return table;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public <T> BonsaiTable<T> use(String tableName, Class<T> type, boolean safe) {
+        ensureAuthenticated();
         short dbId = getOrRegisterDatabaseId();
         short tableId;
+        EntityMetadata meta = (type != null && type != Object.class) ? EntityMetadata.of(type) : null;
 
         if (type != null && type != Object.class) {
             tableId = scanAndRegisterSchema(type);
@@ -83,16 +133,30 @@ public class RemoteRoot implements BonsaiRoot {
             tableId = getOrRegisterTableId(tableName);
         }
 
-        RemoteTable<T> table = new RemoteTable<>(connection, dbId, tableId, db, tableName, type == null ? (Class<T>) Object.class : type, safe);
-        if (Config.CACHE_ENABLED) {
+        RemoteTable<T> table;
+        if (meta != null) {
+            long localTtlMs = meta.localOnly ? meta.ttlMs : -1;
+            table = new RemoteTable<>(connection, dbId, tableId, db, tableName, type,
+                    safe ? net.rainbowcreation.bonsai.WriteMode.SAFE : net.rainbowcreation.bonsai.WriteMode.UNSAFE,
+                    meta.volatileFlag, meta.localOnly, localTtlMs);
+        } else {
+            table = new RemoteTable<>(connection, dbId, tableId, db, tableName, (Class<T>) Object.class, safe);
+        }
+        if ((meta == null || !meta.localOnly) && cacheIsUsable()) {
             return createCachedTable(table, tableName);
         }
         return table;
     }
 
     /**
-     * Scan class and register schema, returning the table ID.
+     * Client read-through cache is only safe on transports that can deliver
+     * server-pushed invalidations. On HTTP (no push channel) an enabled cache
+     * would serve stale data forever, since SUBSCRIBE is a silent no-op there.
      */
+    private boolean cacheIsUsable() {
+        return Config.CACHE_ENABLED && connection.supportsInvalidation();
+    }
+
     private short scanAndRegisterSchema(Class<?> type) {
         String tableName = type.getSimpleName();
 
@@ -102,6 +166,38 @@ public class RemoteRoot implements BonsaiRoot {
             return cached;
         }
 
+        Map<String, Object> payload = getStringObjectMap(type, tableName);
+
+        byte[] bytes = JsonUtil.toJson(payload).getBytes(StandardCharsets.UTF_8);
+
+        try {
+            byte[] response = connection.send(RequestOp.REGISTER_SCHEMA, (short) 0, (short) 0, db, bytes, (byte) 0x01).get(5, TimeUnit.SECONDS);
+
+            
+            if (response != null && response.length >= 3) {
+                ByteBuffer buf = ByteBuffer.wrap(response);
+                short dbId = (short) (buf.get() & 0xFF);
+                short tableId = buf.getShort();
+
+
+                idRegistry.registerDatabase(db, dbId);
+                idRegistry.registerTable(db, tableName, tableId);
+
+                if (cachedDbId == null) {
+                    cachedDbId = dbId;
+                }
+
+                return tableId;
+            } else {
+                throw new RuntimeException("Invalid response from REGISTER_SCHEMA: expected 3 bytes, got " +
+                    (response == null ? "null" : response.length));
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Schema registration failed for " + tableName, e);
+        }
+    }
+
+    private @NonNull Map<String, Object> getStringObjectMap(Class<?> type, String tableName) {
         List<Map<String, Object>> columns = new ArrayList<>();
         boolean classLevelQuery = type.isAnnotationPresent(BonsaiQuery.class);
 
@@ -150,43 +246,13 @@ public class RemoteRoot implements BonsaiRoot {
             }
         }
 
-        
+
         Map<String, Object> payload = new HashMap<>();
         payload.put("table", tableName);
         payload.put("columns", columns);
-
-        byte[] bytes = JsonUtil.toJson(payload).getBytes(StandardCharsets.UTF_8);
-
-        try {
-            byte[] response = connection.send(RequestOp.REGISTER_SCHEMA, (short) 0, (short) 0, db, bytes, (byte) 0x01).get(5, TimeUnit.SECONDS);
-
-            
-            if (response != null && response.length >= 3) {
-                ByteBuffer buf = ByteBuffer.wrap(response);
-                short dbId = (short) (buf.get() & 0xFF);
-                short tableId = buf.getShort();
-
-
-                idRegistry.registerDatabase(db, dbId);
-                idRegistry.registerTable(db, tableName, tableId);
-
-                if (cachedDbId == null) {
-                    cachedDbId = dbId;
-                }
-
-                return tableId;
-            } else {
-                throw new RuntimeException("Invalid response from REGISTER_SCHEMA: expected 3 bytes, got " +
-                    (response == null ? "null" : response.length));
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Schema registration failed for " + tableName, e);
-        }
+        return payload;
     }
 
-    /**
-     * Get or register database ID.
-     */
     private short getOrRegisterDatabaseId() {
         if (cachedDbId != null) {
             return cachedDbId;
@@ -218,9 +284,6 @@ public class RemoteRoot implements BonsaiRoot {
         }
     }
 
-    /**
-     * Get or register table ID (for string-based table names without schema).
-     */
     private short getOrRegisterTableId(String tableName) {
         
         Short cached = idRegistry.getTableId(db, tableName);
@@ -282,7 +345,6 @@ public class RemoteRoot implements BonsaiRoot {
         return "VARCHAR(255)";
     }
 
-    @SuppressWarnings("unchecked")
     private <T> BonsaiTable<T> createCachedTable(RemoteTable<T> remoteTable, String tableName) {
         if (!invalidationCallbackRegistered) {
             synchronized (this) {

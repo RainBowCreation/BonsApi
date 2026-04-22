@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+
 public class ConnectionPool implements Connection, Stoppable {
 
     private final List<TcpConnection> connections;
@@ -61,6 +62,18 @@ public class ConnectionPool implements Connection, Stoppable {
     public void setInvalidationCallback(InvalidationCallback callback) {
         for (TcpConnection conn : connections) {
             conn.setInvalidationCallback(callback);
+        }
+    }
+
+    @Override
+    public boolean supportsInvalidation() {
+        return true;
+    }
+
+    @Override
+    public void authenticateDb(String dbName, String secret) {
+        for (TcpConnection conn : connections) {
+            conn.authenticateDb(dbName, secret);
         }
     }
 

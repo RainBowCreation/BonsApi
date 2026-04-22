@@ -1,5 +1,6 @@
 package net.rainbowcreation.bonsai.api.connection;
 
+import net.rainbowcreation.bonsai.auth.BonsaiAuth;
 import net.rainbowcreation.bonsai.connection.RequestOp;
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.BonsaiRequest;
@@ -18,7 +19,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class TcpConnection implements Connection {
     private final String host;
@@ -34,22 +34,15 @@ public class TcpConnection implements Connection {
     private byte[] writeBuffer = new byte[Config.WRITE_FLUSH_THRESHOLD];
     private int writePosition = 0;
     private final Object writeLock = new Object();
-    private final ScheduledExecutorService flusher;
-    private final AtomicInteger pendingBytes = new AtomicInteger(0);
-    private final AtomicInteger bufferedRequestCount = new AtomicInteger(0);
-
-    private final byte[] flushBuffer = new byte[Config.WRITE_FLUSH_THRESHOLD];
 
     private volatile boolean running = false;
     private volatile InvalidationCallback invalidationCallback;
+    private volatile byte[] sessionNonce;
 
     public TcpConnection(String host, int port, AtomicInteger idGen) {
         this.host = host;
         this.port = port;
         this.idGen = idGen;
-        this.flusher = Executors.newSingleThreadScheduledExecutor(
-            ThreadUtil.createThreadFactory("Bonsai-Flusher", true)
-        );
         connect();
     }
 
@@ -65,6 +58,18 @@ public class TcpConnection implements Connection {
 
             this.in = new DataInputStream(new BufferedInputStream(socket.getInputStream(), 65536));
             this.out = new DataOutputStream(socket.getOutputStream());
+
+            // Read server handshake: [1 byte mode][8 bytes nonce]
+            byte mode = in.readByte();
+            byte[] nonce = new byte[8];
+            in.readFully(nonce);
+            this.sessionNonce = nonce;
+
+            if (mode == 0x01) {
+                byte[] hmac = BonsaiAuth.computeHmac(Config.DB_PASSWORD, nonce, "");
+                out.write(hmac);
+                out.flush();
+            }
 
             this.running = true;
 
@@ -127,42 +132,11 @@ public class TcpConnection implements Connection {
         }
     }
 
-    private void flushBuffer() {
-        if (pendingBytes.get() > 0) {
-            try {
-                doFlushFast();
-            } catch (IOException e) {
-                BonsApi.LOGGER.severe("Flush error: " + e.getMessage());
-            }
-        }
-    }
-
-    private void doFlushFast() throws IOException {
-        if (out == null) return;
-
-        int bytesToWrite;
-        synchronized (writeLock) {
-            if (writePosition == 0) return;
-
-            System.arraycopy(writeBuffer, 0, flushBuffer, 0, writePosition);
-            bytesToWrite = writePosition;
-
-            writePosition = 0;
-            pendingBytes.set(0);
-            bufferedRequestCount.set(0);
-        }
-
-        out.write(flushBuffer, 0, bytesToWrite);
-        out.flush();
-    }
-
     private void doFlush() throws IOException {
         if (writePosition > 0 && out != null) {
             out.write(writeBuffer, 0, writePosition);
             out.flush();
             writePosition = 0;
-            pendingBytes.set(0);
-            bufferedRequestCount.set(0);
         }
     }
 
@@ -214,22 +188,29 @@ public class TcpConnection implements Connection {
             synchronized (writeLock) {
                 if (!running || out == null) throw new IOException("Not connected");
 
-                
+                if (totalSize > writeBuffer.length) {
+                    throw new IOException("Request too large: " + totalSize + " bytes (max " + writeBuffer.length + ")");
+                }
+
                 if (writePosition + totalSize > writeBuffer.length) {
                     doFlush();
                 }
 
-                
-                writeBuffer[writePosition++] = (byte) (dataLen >>> 24);
-                writeBuffer[writePosition++] = (byte) (dataLen >>> 16);
-                writeBuffer[writePosition++] = (byte) (dataLen >>> 8);
-                writeBuffer[writePosition++] = (byte) dataLen;
+                int savedPosition = writePosition;
+                try {
+                    writeBuffer[writePosition++] = (byte) (dataLen >>> 24);
+                    writeBuffer[writePosition++] = (byte) (dataLen >>> 16);
+                    writeBuffer[writePosition++] = (byte) (dataLen >>> 8);
+                    writeBuffer[writePosition++] = (byte) dataLen;
 
-                int written = req.writeTo(writeBuffer, writePosition);
-                writePosition += written;
-                pendingBytes.addAndGet(totalSize);
+                    int written = req.writeTo(writeBuffer, writePosition);
+                    writePosition += written;
 
-                doFlush();
+                    doFlush();
+                } catch (Exception e) {
+                    writePosition = savedPosition;
+                    throw e;
+                }
             }
         } catch (Exception e) {
             pendingRequests.remove(reqId);
@@ -244,7 +225,6 @@ public class TcpConnection implements Connection {
     @Override
     public void stop() {
         running = false;
-        flusher.shutdown();
         synchronized (writeLock) {
             try {
                 doFlush();
@@ -257,15 +237,34 @@ public class TcpConnection implements Connection {
         try { if (socket != null) socket.close(); } catch (Exception ignored) {}
     }
 
-    /**
-     * Registers a callback to handle cache invalidation notifications from the server.
-     * This is required for client-side caching to work correctly.
-     *
-     * @param callback the invalidation callback
-     */
     @Override
     public void setInvalidationCallback(InvalidationCallback callback) {
         this.invalidationCallback = callback;
+    }
+
+    @Override
+    public boolean supportsInvalidation() {
+        return true;
+    }
+
+    @Override
+    public void authenticateDb(String dbName, String secret) {
+        if (secret == null || secret.isEmpty()) return;
+        byte[] nonce = this.sessionNonce;
+        if (nonce == null) {
+            throw new RuntimeException("authenticateDb: no session nonce — connection not ready");
+        }
+        byte[] hmac = BonsaiAuth.computeHmac(secret, nonce, dbName);
+        try {
+            send(RequestOp.AUTH_DB, (short) 0, (short) 0, dbName, hmac, (byte) 0)
+                .get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new RuntimeException("AUTH_DB failed for db '" + dbName + "': " + e.getMessage(), e);
+        }
+    }
+
+    public byte[] getNonce() {
+        return sessionNonce;
     }
 
     public int getPendingCount() {
