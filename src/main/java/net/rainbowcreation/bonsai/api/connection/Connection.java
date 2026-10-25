@@ -8,6 +8,9 @@ import java.util.concurrent.CompletableFuture;
 public interface Connection extends Stoppable {
     CompletableFuture<byte[]> send(RequestOp op, short dbId, short tableId, String key, byte[] payload, byte flags);
 
+    default void setChangeEventRouter(ChangeEventRouter router) {
+    }
+
     default void setInvalidationCallback(InvalidationCallback callback) {
     }
 

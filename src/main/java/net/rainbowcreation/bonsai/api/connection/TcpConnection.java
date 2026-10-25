@@ -5,6 +5,7 @@ import net.rainbowcreation.bonsai.connection.RequestOp;
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.BonsaiRequest;
 import net.rainbowcreation.bonsai.BonsaiResponse;
+import net.rainbowcreation.bonsai.ChangeEvent;
 import net.rainbowcreation.bonsai.api.config.Config;
 import net.rainbowcreation.bonsai.api.util.ClientProfiler;
 import net.rainbowcreation.bonsai.util.ThreadUtil;
@@ -37,6 +38,7 @@ public class TcpConnection implements Connection {
 
     private volatile boolean running = false;
     private volatile InvalidationCallback invalidationCallback;
+    private volatile ChangeEventRouter changeEventRouter;
     private volatile byte[] sessionNonce;
 
     public TcpConnection(String host, int port, AtomicInteger idGen) {
@@ -99,8 +101,13 @@ public class TcpConnection implements Connection {
 
                 if (receivedId == -1) {
                     BonsaiRequest push = BonsaiRequest.fromBytes(data);
-                    
-                    if ((push.op == RequestOp.INVALIDATE || push.op == RequestOp.CHANGE_EVENT) && invalidationCallback != null) {
+                    if (push.op == RequestOp.CHANGE_EVENT && changeEventRouter != null) {
+                        try {
+                            changeEventRouter.accept(ChangeEvent.fromRequest(push));
+                        } catch (Exception ex) {
+                            BonsApi.LOGGER.warning("Bad CHANGE_EVENT frame: " + ex.getMessage());
+                        }
+                    } else if ((push.op == RequestOp.INVALIDATE || push.op == RequestOp.CHANGE_EVENT) && invalidationCallback != null) {
                         invalidationCallback.onInvalidate(push.db, push.table, push.key);
                     }
                     continue;
@@ -240,6 +247,14 @@ public class TcpConnection implements Connection {
     @Override
     public void setInvalidationCallback(InvalidationCallback callback) {
         this.invalidationCallback = callback;
+    }
+
+    @Override
+    public void setChangeEventRouter(ChangeEventRouter router) {
+        this.changeEventRouter = router;
+        if (router != null) {
+            router.registerSource(this);
+        }
     }
 
     @Override

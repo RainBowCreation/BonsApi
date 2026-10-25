@@ -18,6 +18,15 @@ dependencies {
     api(project(":bonsai"))
     compileOnly("org.apache.fory:fory-core:0.14.1")
     compileOnly("com.github.ben-manes.caffeine:caffeine:2.9.3")
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation("org.apache.fory:fory-core:0.14.1")
+    testImplementation("com.github.ben-manes.caffeine:caffeine:2.9.3")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 tasks.shadowJar {

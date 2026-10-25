@@ -7,6 +7,7 @@ import net.rainbowcreation.bonsai.annotation.BonsaiQuery;
 import net.rainbowcreation.bonsai.annotation.EntityMetadata;
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.api.config.Config;
+import net.rainbowcreation.bonsai.api.connection.ChangeEventRouter;
 import net.rainbowcreation.bonsai.api.connection.Connection;
 import net.rainbowcreation.bonsai.connection.RequestOp;
 import net.rainbowcreation.bonsai.util.JsonUtil;
@@ -30,6 +31,7 @@ public class RemoteRoot implements BonsaiRoot {
     private final String db;
     private final String secret;
 
+    private final ChangeEventRouter changeEventRouter = new ChangeEventRouter();
     private final Map<String, RemoteTable<?>> cachedTables = new ConcurrentHashMap<>();
     private volatile boolean invalidationCallbackRegistered = false;
     private volatile boolean authenticated = false;
@@ -48,6 +50,7 @@ public class RemoteRoot implements BonsaiRoot {
                 " does not support server-pushed invalidations — client-side cache will stay DISABLED " +
                 "for db '" + db + "' to prevent stale reads. Use TcpConnection for client caching.");
         }
+        connection.setChangeEventRouter(changeEventRouter);
     }
 
     /**
@@ -345,7 +348,7 @@ public class RemoteRoot implements BonsaiRoot {
         return "VARCHAR(255)";
     }
 
-    private <T> BonsaiTable<T> createCachedTable(RemoteTable<T> remoteTable, String tableName) {
+    <T> BonsaiTable<T> createCachedTable(RemoteTable<T> remoteTable, String tableName) {
         if (!invalidationCallbackRegistered) {
             synchronized (this) {
                 if (!invalidationCallbackRegistered) {
@@ -357,6 +360,7 @@ public class RemoteRoot implements BonsaiRoot {
         }
 
         cachedTables.put(tableName, remoteTable);
+        changeEventRouter.bind(remoteTable.dbId, remoteTable.tableId, remoteTable);
 
         try {
             connection.send(RequestOp.SUBSCRIBE, remoteTable.dbId, remoteTable.tableId, null, null, (byte) 0x01)

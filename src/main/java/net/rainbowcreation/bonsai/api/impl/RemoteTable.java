@@ -2,6 +2,7 @@ package net.rainbowcreation.bonsai.api.impl;
 
 import net.rainbowcreation.bonsai.api.BonsApi;
 import net.rainbowcreation.bonsai.BonsaiFuture;
+import net.rainbowcreation.bonsai.ChangeEvent;
 import net.rainbowcreation.bonsai.BonsaiTable;
 import net.rainbowcreation.bonsai.WriteMode;
 import net.rainbowcreation.bonsai.annotation.BonsaiIgnore;
@@ -738,6 +739,23 @@ public class RemoteTable<T> extends AUnsafe implements BonsaiTable<T> {
         if (cache != null) {
             cache.invalidate(key);
         }
+    }
+
+    public void applyChangeEvent(ChangeEvent event) {
+        if (cache == null) return;
+        if (event.isDelete) { invalidate(event.key); return; }
+        if (event.value == null) return;
+        Object obj = decodePrimitive(event.value);
+        if (obj == null) obj = (type == Object.class) ? deserializeWithTypeInfo(event.value)
+                                                      : FORY.deserialize(event.value);
+        T val;
+        if (type == Object.class || type.isInstance(obj)) {
+            @SuppressWarnings("unchecked") T t = (T) obj;
+            val = t;
+        } else {
+            val = convertFromSerializable(obj, type);
+        }
+        if (val != null) put(event.key, val);
     }
 
     public void invalidateAll() {
